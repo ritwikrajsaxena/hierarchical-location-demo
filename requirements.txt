@@ -3,3 +3,5 @@ networkx
 pandas
 numpy
 plotly
+matplotlib
+seaborn
