@@ -9,7 +9,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 
 st.set_page_config(layout="wide", page_title="Enhanced Hierarchical Location Simulator")
-st.title("🌐 Enhanced Hierarchical Location Management System")
+st.title("🌐 Hierarchical Location Management with Replication")
 st.markdown("---")
 
 # --- Sidebar Configuration ---
@@ -28,8 +28,22 @@ with st.sidebar:
     st.subheader("Forwarding Configuration")
     max_forwarding_chain = st.slider("Max Forwarding Chain Length", 1, 10, 5)
     
+    st.subheader("🔄 Replication Settings")
+    enable_replication = st.checkbox("Enable Replication", value=True)
+    if enable_replication:
+        replication_strategy = st.selectbox(
+            "Replication Strategy",
+            ["CMR-based", "Access-frequency", "Hybrid"]
+        )
+        replication_threshold = st.slider("Replication Threshold", 1, 20, 5)
+        max_replicas = st.slider("Max Replicas per User", 1, 5, 3)
+    else:
+        replication_strategy = "CMR-based"
+        replication_threshold = 5
+        max_replicas = 3
+    
     st.subheader("Simulation Control")
-    simulation_steps = st.slider("Simulation Steps", 1, 20, 5)
+    simulation_steps = st.slider("Simulation Steps", 1, 20, 10)
     
     st.markdown("---")
     run_simulation = st.button("🚀 Run Simulation", use_container_width=True)
@@ -42,26 +56,44 @@ with st.sidebar:
 if 'sim_results' not in st.session_state:
     st.session_state.sim_results = None
     st.session_state.simulator = None
+    st.session_state.sim_no_repl = None
+    st.session_state.results_no_repl = None
 
 # --- Run Simulation ---
 if run_simulation:
     with st.spinner('Running hierarchical location simulation...'):
-        # Create simulator
-        sim = EnhancedHierarchicalSimulator(
+        # Run simulation WITH replication
+        sim_with = EnhancedHierarchicalSimulator(
             num_regions=num_regions,
             cities_per_region=cities_per_region,
             users_per_city=users_per_city,
             mobility_prob=mobility_prob,
             call_prob=call_prob,
-            max_forwarding_chain=max_forwarding_chain
+            max_forwarding_chain=max_forwarding_chain,
+            enable_replication=enable_replication,
+            replication_threshold=replication_threshold,
+            max_replicas=max_replicas,
+            replication_strategy=replication_strategy
         )
+        results_with = sim_with.run_simulation(steps=simulation_steps)
         
-        # Run simulation
-        results = sim.run_simulation(steps=simulation_steps)
+        # Run simulation WITHOUT replication for comparison
+        sim_without = EnhancedHierarchicalSimulator(
+            num_regions=num_regions,
+            cities_per_region=cities_per_region,
+            users_per_city=users_per_city,
+            mobility_prob=mobility_prob,
+            call_prob=call_prob,
+            max_forwarding_chain=max_forwarding_chain,
+            enable_replication=False
+        )
+        results_without = sim_without.run_simulation(steps=simulation_steps)
         
         # Store in session state
-        st.session_state.sim_results = results
-        st.session_state.simulator = sim
+        st.session_state.sim_results = results_with
+        st.session_state.simulator = sim_with
+        st.session_state.sim_no_repl = sim_without
+        st.session_state.results_no_repl = results_without
         
         st.success("✅ Simulation completed successfully!")
 
@@ -69,14 +101,19 @@ if run_simulation:
 if st.session_state.sim_results is not None:
     sim = st.session_state.simulator
     results = st.session_state.sim_results
+    sim_no_repl = st.session_state.sim_no_repl
+    results_no_repl = st.session_state.results_no_repl
     
-    # Create tabs for different views
-    tab1, tab2, tab3, tab4, tab5 = st.tabs([
+    # Create tabs
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
         "📍 Geographic View", 
         "📊 Performance Metrics", 
         "🌳 Network Hierarchy",
         "📈 Forwarding Analysis",
-        "📋 Detailed Statistics"
+        "📋 Detailed Statistics",
+        "🔄 Replication Strategy",
+        "💰 Cost Comparison",
+        "⚖️ Trade-off Analysis"
     ])
     
     with tab1:
@@ -87,15 +124,16 @@ if st.session_state.sim_results is not None:
         with col1:
             st.subheader("User Distribution Map")
             
-            # Create city data for map
             city_data = []
             for city, coords in sim.city_coords.items():
                 user_count = sum(1 for u in sim.user_locations.values() if u == city)
+                replica_count = sum(1 for u, replicas in sim.replica_locations.items() if city in replicas)
                 city_data.append({
                     'city': city,
                     'lat': coords[0],
                     'lon': coords[1],
                     'users': user_count,
+                    'replicas': replica_count,
                     'region': city.split('_')[1]
                 })
             
@@ -107,7 +145,7 @@ if st.session_state.sim_results is not None:
                     lat="lat",
                     lon="lon",
                     hover_name="city",
-                    hover_data=["users"],
+                    hover_data=["users", "replicas"],
                     color="region",
                     size="users",
                     size_max=20,
@@ -118,70 +156,30 @@ if st.session_state.sim_results is not None:
                 st.plotly_chart(fig, use_container_width=True)
         
         with col2:
-            st.subheader("Call Pattern Visualization")
+            st.subheader("Replica Distribution")
             
-            # Extract call data
-            if results['calls']:
-                call_data = []
-                for call in results['calls'][:50]:  # Limit to 50 calls for clarity
-                    caller_city = sim.user_locations[call['caller']]
-                    callee_city = sim.user_locations[call['callee']]
-                    
-                    caller_coords = sim.city_coords[caller_city]
-                    callee_coords = sim.city_coords[callee_city]
-                    
-                    call_data.append({
-                        'caller': call['caller'],
-                        'callee': call['callee'],
-                        'lat1': caller_coords[0],
-                        'lon1': caller_coords[1],
-                        'lat2': callee_coords[0],
-                        'lon2': callee_coords[1],
-                        'latency': call['latency']
-                    })
-                
-                call_df = pd.DataFrame(call_data)
-                
-                fig = go.Figure()
-                
-                # Add city markers
-                for _, city in city_df.iterrows():
-                    fig.add_trace(go.Scattermapbox(
-                        lon=[city['lon']],
-                        lat=[city['lat']],
-                        mode='markers',
-                        marker=dict(size=10, color='blue'),
-                        name=city['city'],
-                        showlegend=False
-                    ))
-                
-                # Add call lines
-                for _, call in call_df.iterrows():
-                    color = 'green' if call['latency'] < 3 else 'orange' if call['latency'] < 5 else 'red'
-                    fig.add_trace(go.Scattermapbox(
-                        mode='lines',
-                        lon=[call['lon1'], call['lon2']],
-                        lat=[call['lat1'], call['lat2']],
-                        line=dict(width=1, color=color),
-                        showlegend=False
-                    ))
-                
-                fig.update_layout(
+            if enable_replication:
+                fig = px.scatter_mapbox(
+                    city_df,
+                    lat="lat",
+                    lon="lon",
+                    hover_name="city",
+                    hover_data=["users", "replicas"],
+                    color="replicas",
+                    size="replicas",
+                    size_max=25,
+                    zoom=3,
                     mapbox_style="carto-positron",
-                    mapbox_zoom=3,
-                    mapbox_center_lat=37,
-                    mapbox_center_lon=-95,
-                    title="Call Patterns (Green=Low, Orange=Med, Red=High Latency)"
+                    title="Replica Distribution Across Cities",
+                    color_continuous_scale="Reds"
                 )
-                
                 st.plotly_chart(fig, use_container_width=True)
             else:
-                st.info("No calls generated in this simulation run.")
+                st.info("Enable replication to see replica distribution")
     
     with tab2:
         st.header("Performance Metrics")
         
-        # Key metrics in columns
         col1, col2, col3, col4 = st.columns(4)
         
         with col1:
@@ -191,41 +189,32 @@ if st.session_state.sim_results is not None:
         with col3:
             if sim.metrics['updates'] > 0:
                 cmr = sim.metrics['queries'] / sim.metrics['updates']
-                st.metric("Call-to-Mobility Ratio", f"{cmr:.2f}")
+                st.metric("CMR", f"{cmr:.2f}")
         with col4:
-            total_calls = len(results['calls'])
-            st.metric("Total Calls", total_calls)
+            if enable_replication:
+                st.metric("Replica Hits", sim.metrics['replica_hits'])
+            else:
+                st.metric("Total Calls", len(results['calls']))
         
-        # Latency over time
-        if sim.metrics['latency_history']:
+        # Latency comparison
+        if sim.metrics['latency_history'] and sim_no_repl.metrics['latency_history']:
             fig = go.Figure()
             fig.add_trace(go.Scatter(
                 y=sim.metrics['latency_history'],
                 mode='lines+markers',
-                name='Average Latency',
+                name='With Replication' if enable_replication else 'Current',
                 line=dict(color='blue', width=2)
             ))
-            fig.update_layout(
-                title="Average Call Latency Over Time",
-                xaxis_title="Time Step",
-                yaxis_title="Average Latency (hops)",
-                showlegend=True
-            )
-            st.plotly_chart(fig, use_container_width=True)
-        
-        # CMR History
-        if sim.metrics['cmr_history']:
-            fig = go.Figure()
             fig.add_trace(go.Scatter(
-                y=sim.metrics['cmr_history'],
+                y=sim_no_repl.metrics['latency_history'],
                 mode='lines+markers',
-                name='CMR',
-                line=dict(color='orange', width=2)
+                name='Without Replication',
+                line=dict(color='red', width=2, dash='dash')
             ))
             fig.update_layout(
-                title="Call-to-Mobility Ratio Evolution",
+                title="Average Call Latency Comparison",
                 xaxis_title="Time Step",
-                yaxis_title="CMR",
+                yaxis_title="Average Latency (hops)",
                 showlegend=True
             )
             st.plotly_chart(fig, use_container_width=True)
@@ -233,7 +222,6 @@ if st.session_state.sim_results is not None:
     with tab3:
         st.header("Network Hierarchy Visualization")
         
-        # Network statistics
         col1, col2, col3 = st.columns(3)
         with col1:
             st.info(f"🌍 Regions: {num_regions}")
@@ -242,10 +230,7 @@ if st.session_state.sim_results is not None:
         with col3:
             st.info(f"👥 Total Users: {num_regions * cities_per_region * users_per_city}")
         
-        # Tree structure info
-        st.subheader("Hierarchical Tree Structure")
-        
-        # Create tree visualization data
+        # Tree structure
         tree_data = {
             'Level': ['Root', 'Region', 'City', 'User'],
             'Count': [
@@ -267,32 +252,14 @@ if st.session_state.sim_results is not None:
             log_y=True
         )
         st.plotly_chart(fig, use_container_width=True)
-        
-        # Movement patterns
-        st.subheader("User Movement Patterns")
-        movements_per_step = results['movements']
-        
-        fig = go.Figure()
-        fig.add_trace(go.Bar(
-            y=movements_per_step,
-            name='Users Moved',
-            marker_color='purple'
-        ))
-        fig.update_layout(
-            title="User Movements per Simulation Step",
-            xaxis_title="Step",
-            yaxis_title="Number of Users Moved"
-        )
-        st.plotly_chart(fig, use_container_width=True)
     
     with tab4:
         st.header("Forwarding Pointer Analysis")
         
-        # Forwarding hits by level
         col1, col2 = st.columns(2)
         
         with col1:
-            st.subheader("Forwarding Pointer Usage by Level")
+            st.subheader("Forwarding Pointer Usage")
             
             if sim.metrics['forwarding_hits']:
                 fp_data = pd.DataFrame({
@@ -304,138 +271,378 @@ if st.session_state.sim_results is not None:
                     fp_data,
                     x='Level',
                     y='Hits',
-                    title='Forwarding Pointer Hits',
+                    title='Forwarding Pointer Hits by Level',
                     color='Level',
                     color_discrete_map={'city': 'blue', 'region': 'green', 'root': 'red'}
                 )
                 st.plotly_chart(fig, use_container_width=True)
-            else:
-                st.info("No forwarding pointer hits recorded.")
         
         with col2:
-            st.subheader("Forwarding Effectiveness")
+            st.subheader("Latency Distribution")
             
-            # Calculate effectiveness metrics
             if results['calls']:
-                levels_used = []
-                for call in results['calls']:
-                    if call['forwarding_levels']:
-                        levels_used.extend(call['forwarding_levels'])
+                latencies = [call['latency'] for call in results['calls']]
                 
-                if levels_used:
-                    level_counts = pd.Series(levels_used).value_counts()
-                    
-                    fig = px.pie(
-                        values=level_counts.values,
-                        names=level_counts.index,
-                        title='Distribution of Forwarding Level Usage'
-                    )
-                    st.plotly_chart(fig, use_container_width=True)
-                else:
-                    st.info("No forwarding pointers used in calls.")
-        
-        # Latency distribution
-        st.subheader("Latency Distribution Analysis")
-        
-        if results['calls']:
-            latencies = [call['latency'] for call in results['calls']]
-            
-            fig = go.Figure()
-            fig.add_trace(go.Histogram(
-                x=latencies,
-                nbinsx=20,
-                name='Latency Distribution',
-                marker_color='teal'
-            ))
-            fig.update_layout(
-                title="Call Latency Distribution",
-                xaxis_title="Latency (hops)",
-                yaxis_title="Frequency",
-                showlegend=True
-            )
-            st.plotly_chart(fig, use_container_width=True)
+                fig = go.Figure()
+                fig.add_trace(go.Histogram(
+                    x=latencies,
+                    nbinsx=20,
+                    name='Latency Distribution',
+                    marker_color='teal'
+                ))
+                fig.update_layout(
+                    title="Call Latency Distribution",
+                    xaxis_title="Latency (hops)",
+                    yaxis_title="Frequency"
+                )
+                st.plotly_chart(fig, use_container_width=True)
     
     with tab5:
         st.header("Detailed Statistics")
         
-        # Call statistics
         if results['calls']:
-            st.subheader("Call Statistics")
-            
             call_stats = pd.DataFrame(results['calls'])
             
             col1, col2, col3 = st.columns(3)
             
             with col1:
                 avg_latency = call_stats['latency'].mean()
-                st.metric("Average Latency", f"{avg_latency:.2f} hops")
+                st.metric("Avg Latency", f"{avg_latency:.2f} hops")
             
             with col2:
                 max_latency = call_stats['latency'].max()
-                st.metric("Maximum Latency", f"{max_latency} hops")
+                st.metric("Max Latency", f"{max_latency} hops")
             
             with col3:
-                min_latency = call_stats['latency'].min()
-                st.metric("Minimum Latency", f"{min_latency} hops")
+                if enable_replication and 'used_replica' in call_stats.columns:
+                    replica_usage = call_stats['used_replica'].sum()
+                    st.metric("Calls Using Replicas", replica_usage)
+                else:
+                    min_latency = call_stats['latency'].min()
+                    st.metric("Min Latency", f"{min_latency} hops")
+    
+    with tab6:
+        st.header("🔄 Replication Strategy Analysis")
+        
+        if enable_replication:
+            repl_analysis = sim.get_replication_analysis()
             
-            # Show sample calls
-            st.subheader("Sample Call Records")
-            sample_calls = call_stats[['caller', 'callee', 'latency', 'optimal_level']].head(20)
-            st.dataframe(sample_calls, use_container_width=True)
+            col1, col2 = st.columns(2)
             
-            # User activity analysis
-            st.subheader("Most Active Users")
-            
-            call_frequency = {}
-            for call in results['calls']:
-                call_frequency[call['caller']] = call_frequency.get(call['caller'], 0) + 1
-                call_frequency[call['callee']] = call_frequency.get(call['callee'], 0) + 1
-            
-            if call_frequency:
-                top_users = pd.DataFrame({
-                    'User': list(call_frequency.keys()),
-                    'Call Count': list(call_frequency.values())
-                }).sort_values('Call Count', ascending=False).head(10)
+            with col1:
+                st.subheader("Replica Distribution")
                 
-                fig = px.bar(
-                    top_users,
-                    x='User',
-                    y='Call Count',
-                    title='Top 10 Most Active Users'
+                # Users with replicas
+                users_with_replicas = len(repl_analysis['users_with_replicas'])
+                total_replicas = sum(len(sim.replica_locations[u]) for u in sim.replica_locations)
+                
+                st.metric("Users with Replicas", users_with_replicas)
+                st.metric("Total Replicas", total_replicas)
+                
+                # Replica count distribution
+                if repl_analysis['replica_distribution']:
+                    dist_df = pd.DataFrame(
+                        list(repl_analysis['replica_distribution'].items()),
+                        columns=['Replica Count', 'Users']
+                    )
+                    
+                    fig = px.bar(
+                        dist_df,
+                        x='Replica Count',
+                        y='Users',
+                        title='Distribution of Replica Counts'
+                    )
+                    st.plotly_chart(fig, use_container_width=True)
+            
+            with col2:
+                st.subheader("CMR-based Analysis")
+                
+                # CMR categories
+                cmr_stats = {}
+                for category, users in repl_analysis['cmr_analysis'].items():
+                    if users:
+                        avg_replicas = np.mean([u['replicas'] for u in users])
+                        cmr_stats[category] = {
+                            'count': len(users),
+                            'avg_replicas': avg_replicas
+                        }
+                
+                if cmr_stats:
+                    cmr_df = pd.DataFrame.from_dict(cmr_stats, orient='index')
+                    
+                    fig = make_subplots(
+                        rows=1, cols=2,
+                        subplot_titles=('Users by CMR Category', 'Avg Replicas by CMR')
+                    )
+                    
+                    fig.add_trace(
+                        go.Bar(x=cmr_df.index, y=cmr_df['count'], name='User Count'),
+                        row=1, col=1
+                    )
+                    
+                    fig.add_trace(
+                        go.Bar(x=cmr_df.index, y=cmr_df['avg_replicas'], name='Avg Replicas'),
+                        row=1, col=2
+                    )
+                    
+                    fig.update_layout(title='CMR-based Replication Analysis')
+                    st.plotly_chart(fig, use_container_width=True)
+            
+            # Replica evolution over time
+            if sim.metrics['replica_count_history']:
+                st.subheader("Replica Evolution")
+                
+                fig = go.Figure()
+                fig.add_trace(go.Scatter(
+                    y=sim.metrics['replica_count_history'],
+                    mode='lines+markers',
+                    name='Total Replicas',
+                    line=dict(color='purple', width=2)
+                ))
+                fig.update_layout(
+                    title="Total Replicas Over Time",
+                    xaxis_title="Time Step",
+                    yaxis_title="Number of Replicas"
                 )
                 st.plotly_chart(fig, use_container_width=True)
-        
-        # Export options
-        st.subheader("Export Data")
+        else:
+            st.info("Enable replication to see replication strategy analysis")
+    
+    with tab7:
+        st.header("💰 Cost Comparison Analysis")
         
         col1, col2 = st.columns(2)
         
         with col1:
-            if st.button("📊 Export Metrics to CSV"):
-                metrics_df = pd.DataFrame({
-                    'Metric': ['Total Queries', 'Total Updates', 'CMR'],
+            st.subheader("Search vs Update Costs")
+            
+            # Compare costs with and without replication
+            cost_data = {
+                'Cost Type': ['Search', 'Update', 'Storage', 'Consistency'],
+                'Without Replication': [
+                    sim_no_repl.costs['search_without_replication'],
+                    sim_no_repl.costs['update_without_replication'],
+                    0,
+                    0
+                ],
+                'With Replication': [
+                    sim.costs['search_with_replication'] if enable_replication else sim.costs['search_without_replication'],
+                    sim.costs['update_with_replication'] if enable_replication else sim.costs['update_without_replication'],
+                    sim.costs['storage_cost'] if enable_replication else 0,
+                    sim.costs['consistency_maintenance'] if enable_replication else 0
+                ]
+            }
+            
+            cost_df = pd.DataFrame(cost_data)
+            
+            fig = go.Figure()
+            fig.add_trace(go.Bar(
+                x=cost_df['Cost Type'],
+                y=cost_df['Without Replication'],
+                name='Without Replication',
+                marker_color='lightblue'
+            ))
+            fig.add_trace(go.Bar(
+                x=cost_df['Cost Type'],
+                y=cost_df['With Replication'],
+                name='With Replication',
+                marker_color='darkblue'
+            ))
+            fig.update_layout(
+                title='Cost Comparison',
+                yaxis_title='Cost Units',
+                barmode='group'
+            )
+            st.plotly_chart(fig, use_container_width=True)
+        
+        with col2:
+            st.subheader("Cost Evolution")
+            
+            if sim.costs['search_costs_per_step'] and sim.costs['update_costs_per_step']:
+                fig = go.Figure()
+                fig.add_trace(go.Scatter(
+                    y=sim.costs['search_costs_per_step'],
+                    mode='lines',
+                    name='Search Cost',
+                    line=dict(color='green', width=2)
+                ))
+                fig.add_trace(go.Scatter(
+                    y=sim.costs['update_costs_per_step'],
+                    mode='lines',
+                    name='Update Cost',
+                    line=dict(color='orange', width=2)
+                ))
+                fig.update_layout(
+                    title='Cost Evolution Over Time',
+                    xaxis_title='Time Step',
+                    yaxis_title='Cost per Step'
+                )
+                st.plotly_chart(fig, use_container_width=True)
+        
+        # Cost savings analysis
+        if enable_replication:
+            st.subheader("Cost Savings Analysis")
+            
+            search_savings = sim_no_repl.costs['search_without_replication'] - sim.costs['search_with_replication']
+            update_overhead = sim.costs['update_with_replication'] - sim.costs['update_without_replication']
+            net_benefit = search_savings - update_overhead - sim.costs['storage_cost']
+            
+            col1, col2, col3 = st.columns(3)
+            
+            with col1:
+                st.metric("Search Cost Savings", f"{search_savings:.0f}")
+            with col2:
+                st.metric("Update Overhead", f"{update_overhead:.0f}")
+            with col3:
+                color = "normal" if net_benefit > 0 else "inverse"
+                st.metric("Net Benefit", f"{net_benefit:.0f}", delta_color=color)
+    
+    with tab8:
+        st.header("⚖️ Trade-off Analysis")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.subheader("Search vs Update Trade-off")
+            
+            # Create trade-off scatter plot
+            strategies = []
+            
+            # No replication point
+            strategies.append({
+                'Strategy': 'No Replication',
+                'Search Cost': sim_no_repl.costs['search_without_replication'],
+                'Update Cost': sim_no_repl.costs['update_without_replication']
+            })
+            
+            # With replication point
+            if enable_replication:
+                strategies.append({
+                    'Strategy': f'Replication (threshold={replication_threshold})',
+                    'Search Cost': sim.costs['search_with_replication'],
+                    'Update Cost': sim.costs['update_with_replication']
+                })
+            
+            strategy_df = pd.DataFrame(strategies)
+            
+            fig = px.scatter(
+                strategy_df,
+                x='Update Cost',
+                y='Search Cost',
+                text='Strategy',
+                title='Search vs Update Cost Trade-off',
+                size_max=20
+            )
+            fig.update_traces(textposition='top center', marker=dict(size=15))
+            fig.update_layout(
+                xaxis_title='Update Cost',
+                yaxis_title='Search Cost',
+                showlegend=False
+            )
+            st.plotly_chart(fig, use_container_width=True)
+        
+        with col2:
+            st.subheader("Efficiency Metrics")
+            
+            # Calculate efficiency metrics
+            if enable_replication:
+                total_ops_no_repl = sim_no_repl.costs['search_without_replication'] + \
+                                   sim_no_repl.costs['update_without_replication']
+                total_ops_with_repl = sim.costs['search_with_replication'] + \
+                                     sim.costs['update_with_replication'] + \
+                                     sim.costs['storage_cost']
+                
+                efficiency_gain = ((total_ops_no_repl - total_ops_with_repl) / total_ops_no_repl) * 100
+                
+                metrics_data = {
+                    'Metric': ['Total Operations (No Repl)', 'Total Operations (With Repl)', 
+                              'Efficiency Gain', 'Replica Hit Rate'],
                     'Value': [
-                        sim.metrics['queries'],
-                        sim.metrics['updates'],
-                        sim.metrics['queries'] / max(sim.metrics['updates'], 1)
+                        f"{total_ops_no_repl:.0f}",
+                        f"{total_ops_with_repl:.0f}",
+                        f"{efficiency_gain:.1f}%",
+                        f"{(sim.metrics['replica_hits'] / max(len(results['calls']), 1) * 100):.1f}%"
+                    ]
+                }
+                
+                metrics_df = pd.DataFrame(metrics_data)
+                st.table(metrics_df)
+            
+        # Replication benefit over time
+        if enable_replication and sim.metrics['replication_benefit']:
+            st.subheader("Replication Benefit Evolution")
+            
+            fig = go.Figure()
+            fig.add_trace(go.Scatter(
+                y=sim.metrics['replication_benefit'],
+                mode='lines+markers',
+                name='Cumulative Benefit',
+                line=dict(color='green' if sim.metrics['replication_benefit'][-1] > 0 else 'red', width=2)
+            ))
+            fig.add_hline(y=0, line_dash="dash", line_color="gray")
+            fig.update_layout(
+                title="Cumulative Replication Benefit Over Time",
+                xaxis_title="Time Step",
+                yaxis_title="Benefit (positive = good)"
+            )
+            st.plotly_chart(fig, use_container_width=True)
+        
+        # Summary recommendations
+        st.subheader("📌 Recommendations")
+        
+        if enable_replication:
+            if net_benefit > 0:
+                st.success(f"""
+                ✅ **Replication is beneficial** for this configuration:
+                - Net benefit: {net_benefit:.0f} cost units saved
+                - Search cost reduced by {search_savings:.0f}
+                - Replica hit rate: {(sim.metrics['replica_hits'] / max(len(results['calls']), 1) * 100):.1f}%
+                """)
+            else:
+                st.warning(f"""
+                ⚠️ **Replication may not be optimal** for this configuration:
+                - Net cost: {abs(net_benefit):.0f} additional cost units
+                - Consider adjusting the replication threshold
+                - Current threshold: {replication_threshold}
+                """)
+        
+        # Export options
+        st.subheader("📊 Export Analysis")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            if st.button("Export Cost Analysis"):
+                export_data = pd.DataFrame({
+                    'Metric': ['Search Cost (No Repl)', 'Update Cost (No Repl)',
+                              'Search Cost (With Repl)', 'Update Cost (With Repl)',
+                              'Storage Cost', 'Consistency Cost', 'Net Benefit'],
+                    'Value': [
+                        sim_no_repl.costs['search_without_replication'],
+                        sim_no_repl.costs['update_without_replication'],
+                        sim.costs['search_with_replication'] if enable_replication else 0,
+                        sim.costs['update_with_replication'] if enable_replication else 0,
+                        sim.costs['storage_cost'] if enable_replication else 0,
+                        sim.costs['consistency_maintenance'] if enable_replication else 0,
+                        net_benefit if enable_replication else 0
                     ]
                 })
-                csv = metrics_df.to_csv(index=False)
+                csv = export_data.to_csv(index=False)
                 st.download_button(
-                    label="Download Metrics CSV",
+                    label="Download Cost Analysis CSV",
                     data=csv,
-                    file_name='hierarchical_metrics.csv',
+                    file_name='replication_cost_analysis.csv',
                     mime='text/csv'
                 )
         
         with col2:
-            if results['calls'] and st.button("📞 Export Calls to CSV"):
-                calls_df = pd.DataFrame(results['calls'])
-                csv = calls_df.to_csv(index=False)
+            if enable_replication and st.button("Export Replication Stats"):
+                repl_stats_df = pd.DataFrame(results['replication_stats'])
+                csv = repl_stats_df.to_csv(index=False)
                 st.download_button(
-                    label="Download Calls CSV",
+                    label="Download Replication Stats CSV",
                     data=csv,
-                    file_name='hierarchical_calls.csv',
+                    file_name='replication_statistics.csv',
                     mime='text/csv'
                 )
 
@@ -443,28 +650,35 @@ else:
     # Welcome screen
     st.info("👈 Configure simulation parameters in the sidebar and click 'Run Simulation' to start!")
     
-    # Display information about the system
     st.markdown("""
     ### 📖 About This System
     
-    This enhanced hierarchical location management system demonstrates:
+    This enhanced hierarchical location management system now includes:
     
-    - **Multi-level Forwarding Pointers**: Implements forwarding at city, region, and root levels
-    - **Realistic Mobility**: Distance-based movement probabilities
-    - **Dynamic Optimization**: CMR-based level adjustment
-    - **Performance Analysis**: Comprehensive metrics and visualizations
+    - **Selective Replication**: Intelligently replicates user data based on access patterns
+    - **Cost Analysis**: Comprehensive comparison of search vs update costs
+    - **Trade-off Visualization**: Clear visualization of the replication trade-offs
+    - **Multiple Strategies**: CMR-based, access-frequency, and hybrid replication strategies
     
-    ### 🎯 Key Features
+    ### 🎯 New Features
     
-    1. **Hierarchical Structure**: Root → Regions → Cities → Users
-    2. **Smart Forwarding**: Reduces location query latency
-    3. **Adaptive Strategy**: Adjusts to user behavior patterns
-    4. **Visual Analytics**: Interactive maps and performance charts
+    1. **Replication Management**: Dynamic replica placement based on user behavior
+    2. **Cost Tracking**: Detailed cost analysis for search, update, storage, and consistency
+    3. **Benefit Analysis**: Real-time calculation of replication benefits
+    4. **Strategy Comparison**: Side-by-side comparison with and without replication
+    
+    ### 📊 Key Metrics Tracked
+    
+    - **Search Cost**: Cost of finding users (reduced by replicas)
+    - **Update Cost**: Cost of updating locations (increased by replicas)
+    - **Storage Cost**: Cost of maintaining replicas
+    - **Consistency Cost**: Cost of keeping replicas synchronized
+    - **Net Benefit**: Overall benefit of replication strategy
     
     ### 🚀 Getting Started
     
-    1. Adjust the network topology settings
-    2. Configure user behavior parameters
-    3. Set forwarding chain length
-    4. Click 'Run Simulation' to see results!
+    1. Configure network topology
+    2. Set mobility and call patterns
+    3. Enable replication and choose strategy
+    4. Run simulation to see comprehensive analysis!
     """)
