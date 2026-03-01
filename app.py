@@ -7,6 +7,7 @@ import numpy as np
 from simulation import EnhancedHierarchicalSimulator
 import matplotlib.pyplot as plt
 import seaborn as sns
+import networkx as nx
 
 st.set_page_config(layout="wide", page_title="Enhanced Hierarchical Location Simulator")
 st.title("🌐 Hierarchical Location Management with Replication")
@@ -58,6 +59,7 @@ if 'sim_results' not in st.session_state:
     st.session_state.simulator = None
     st.session_state.sim_no_repl = None
     st.session_state.results_no_repl = None
+    st.session_state.last_calls = []
 
 # --- Run Simulation ---
 if run_simulation:
@@ -75,7 +77,36 @@ if run_simulation:
             max_replicas=max_replicas,
             replication_strategy=replication_strategy
         )
-        results_with = sim_with.run_simulation(steps=simulation_steps)
+        
+        # Track calls for visualization
+        all_calls = []
+        for step in range(simulation_steps):
+            calls, moved_users = sim_with.simulate_step()
+            # Store calls with location information
+            for call in calls:
+                caller_city = sim_with.user_locations[call['caller']]
+                callee_city = sim_with.user_locations[call['callee']]
+                call['caller_city'] = caller_city
+                call['callee_city'] = callee_city
+                call['caller_coords'] = sim_with.city_coords[caller_city]
+                call['callee_coords'] = sim_with.city_coords[callee_city]
+                call['step'] = step
+                all_calls.append(call)
+        
+        results_with = {
+            'calls': all_calls,
+            'movements': [],
+            'forwarding_effectiveness': sim_with.metrics['forwarding_hits'],
+            'replication_stats': [],
+            'cost_comparison': {
+                'search_without_replication': sim_with.costs['search_without_replication'],
+                'search_with_replication': sim_with.costs['search_with_replication'],
+                'update_without_replication': sim_with.costs['update_without_replication'],
+                'update_with_replication': sim_with.costs['update_with_replication'],
+                'storage_cost': sim_with.costs['storage_cost'],
+                'consistency_cost': sim_with.costs['consistency_maintenance']
+            }
+        }
         
         # Run simulation WITHOUT replication for comparison
         sim_without = EnhancedHierarchicalSimulator(
@@ -94,6 +125,7 @@ if run_simulation:
         st.session_state.simulator = sim_with
         st.session_state.sim_no_repl = sim_without
         st.session_state.results_no_repl = results_without
+        st.session_state.last_calls = all_calls[-min(50, len(all_calls)):] if all_calls else []  # Store last 50 calls
         
         st.success("✅ Simulation completed successfully!")
 
@@ -119,63 +151,146 @@ if st.session_state.sim_results is not None:
     with tab1:
         st.header("Geographic Distribution & Call Patterns")
         
-        col1, col2 = st.columns(2)
+        # Prepare city data
+        city_data = []
+        for city, coords in sim.city_coords.items():
+            user_count = sum(1 for u in sim.user_locations.values() if u == city)
+            replica_count = sum(1 for u, replicas in sim.replica_locations.items() if city in replicas)
+            city_data.append({
+                'city': city,
+                'lat': coords[0],
+                'lon': coords[1],
+                'users': user_count,
+                'replicas': replica_count,
+                'region': city.split('_')[1]
+            })
+        
+        city_df = pd.DataFrame(city_data)
+        
+        # Main map with users and call connections
+        st.subheader("🗺️ Live Call Activity Map")
+        
+        # Create the main figure
+        fig = go.Figure()
+        
+        # Add city markers
+        fig.add_trace(go.Scattermapbox(
+            lat=city_df['lat'],
+            lon=city_df['lon'],
+            mode='markers',
+            marker=dict(
+                size=city_df['users'] * 3 + 10,
+                color=city_df['users'],
+                colorscale='Viridis',
+                showscale=True,
+                colorbar=dict(title="Users", x=1.02),
+                opacity=0.8
+            ),
+            text=city_df['city'],
+            hovertemplate='<b>%{text}</b><br>' +
+                         'Users: %{marker.color}<br>' +
+                         'Lat: %{lat}<br>' +
+                         'Lon: %{lon}<extra></extra>',
+            name='Cities'
+        ))
+        
+        # Add call lines
+        if st.session_state.last_calls:
+            # Create lines for each call
+            for call in st.session_state.last_calls[-20:]:  # Show last 20 calls
+                caller_coords = call['caller_coords']
+                callee_coords = call['callee_coords']
+                
+                # Determine line color based on call characteristics
+                if call.get('used_replica', False):
+                    line_color = 'green'
+                    line_width = 2
+                    line_opacity = 0.6
+                elif call['latency'] > 3:
+                    line_color = 'red'
+                    line_width = 1.5
+                    line_opacity = 0.4
+                else:
+                    line_color = 'blue'
+                    line_width = 1
+                    line_opacity = 0.3
+                
+                # Add line trace
+                fig.add_trace(go.Scattermapbox(
+                    mode='lines',
+                    lon=[caller_coords[1], callee_coords[1]],
+                    lat=[caller_coords[0], callee_coords[0]],
+                    line=dict(
+                        width=line_width,
+                        color=line_color
+                    ),
+                    opacity=line_opacity,
+                    hovertemplate=f'Call from {call["caller"]} to {call["callee"]}<br>' +
+                                 f'Latency: {call["latency"]} hops<br>' +
+                                 f'Replica Used: {call.get("used_replica", False)}<extra></extra>',
+                    showlegend=False
+                ))
+        
+        # Update map layout
+        fig.update_layout(
+            mapbox=dict(
+                style="carto-positron",
+                center=dict(
+                    lat=city_df['lat'].mean(),
+                    lon=city_df['lon'].mean()
+                ),
+                zoom=3
+            ),
+            margin=dict(l=0, r=0, t=30, b=0),
+            height=600,
+            title="Active Call Connections (Last 20 Calls)"
+        )
+        
+        st.plotly_chart(fig, use_container_width=True)
+        
+        # Call statistics by city
+        col1, col2, col3 = st.columns(3)
         
         with col1:
-            st.subheader("User Distribution Map")
-            
-            city_data = []
-            for city, coords in sim.city_coords.items():
-                user_count = sum(1 for u in sim.user_locations.values() if u == city)
-                replica_count = sum(1 for u, replicas in sim.replica_locations.items() if city in replicas)
-                city_data.append({
-                    'city': city,
-                    'lat': coords[0],
-                    'lon': coords[1],
-                    'users': user_count,
-                    'replicas': replica_count,
-                    'region': city.split('_')[1]
-                })
-            
-            city_df = pd.DataFrame(city_data)
-            
-            if not city_df.empty:
-                fig = px.scatter_mapbox(
-                    city_df,
-                    lat="lat",
-                    lon="lon",
-                    hover_name="city",
-                    hover_data=["users", "replicas"],
-                    color="region",
-                    size="users",
-                    size_max=20,
-                    zoom=3,
-                    mapbox_style="carto-positron",
-                    title="User Distribution Across Cities"
-                )
-                st.plotly_chart(fig, use_container_width=True)
+            st.metric("📞 Total Calls", len(results['calls']))
         
         with col2:
-            st.subheader("Replica Distribution")
-            
-            if enable_replication:
-                fig = px.scatter_mapbox(
-                    city_df,
-                    lat="lat",
-                    lon="lon",
-                    hover_name="city",
-                    hover_data=["users", "replicas"],
-                    color="replicas",
-                    size="replicas",
-                    size_max=25,
-                    zoom=3,
-                    mapbox_style="carto-positron",
-                    title="Replica Distribution Across Cities",
-                    color_continuous_scale="Reds"
-                )
-                st.plotly_chart(fig, use_container_width=True)
-            else:
-                st.info("Enable replication to see replica distribution")
+            if st.session_state.last_calls:
+                avg_latency = np.mean([c['latency'] for c in st.session_state.last_calls])
+                st.metric("⏱️ Avg Latency (recent)", f"{avg_latency:.2f} hops")
+        
+        with col3:
+            if enable_replication and st.session_state.last_calls:
+                replica_calls = sum(1 for c in st.session_state.last_calls if c.get('used_replica', False))
+                st.metric("✅ Replica Hits (recent)", replica_calls)
+        
+        # Call heatmap
+        st.subheader("📊 Call Intensity Heatmap")
+        
+        # Create call matrix between cities
+        call_matrix = pd.DataFrame(0, index=list(sim.city_coords.keys()), columns=list(sim.city_coords.keys()))
+        
+        for call in results['calls']:
+            if 'caller_city' in call and 'callee_city' in call:
+                call_matrix.loc[call['caller_city'], call['callee_city']] += 1
+        
+        # Create heatmap
+        fig_heat = go.Figure(data=go.Heatmap(
+            z=call_matrix.values,
+            x=call_matrix.columns,
+            y=call_matrix.index,
+            colorscale='YlOrRd',
+            hovertemplate='From: %{y}<br>To: %{x}<br>Calls: %{z}<extra></extra>'
+        ))
+        
+        fig_heat.update_layout(
+            title="Call Frequency Between Cities",
+            xaxis_title="Destination City",
+            yaxis_title="Origin City",
+            height=500
+        )
+        
+        st.plotly_chart(fig_heat, use_container_width=True)
     
     with tab2:
         st.header("Performance Metrics")
@@ -230,28 +345,149 @@ if st.session_state.sim_results is not None:
         with col3:
             st.info(f"👥 Total Users: {num_regions * cities_per_region * users_per_city}")
         
-        # Tree structure
-        tree_data = {
-            'Level': ['Root', 'Region', 'City', 'User'],
-            'Count': [
-                1,
-                num_regions,
-                num_regions * cities_per_region,
-                num_regions * cities_per_region * users_per_city
-            ]
-        }
+        # Tree structure bar chart and actual tree visualization
+        col1, col2 = st.columns(2)
         
-        tree_df = pd.DataFrame(tree_data)
+        with col1:
+            tree_data = {
+                'Level': ['Root', 'Region', 'City', 'User'],
+                'Count': [
+                    1,
+                    num_regions,
+                    num_regions * cities_per_region,
+                    num_regions * cities_per_region * users_per_city
+                ]
+            }
+            
+            tree_df = pd.DataFrame(tree_data)
+            
+            fig = px.bar(
+                tree_df,
+                x='Level',
+                y='Count',
+                title='Node Distribution by Hierarchy Level',
+                color='Level',
+                log_y=True
+            )
+            st.plotly_chart(fig, use_container_width=True)
         
-        fig = px.bar(
-            tree_df,
-            x='Level',
-            y='Count',
-            title='Node Distribution by Hierarchy Level',
-            color='Level',
-            log_y=True
-        )
-        st.plotly_chart(fig, use_container_width=True)
+        with col2:
+            st.subheader("🌳 Hierarchical Tree Structure")
+            
+            # Create a smaller sample tree for visualization
+            sample_tree = nx.DiGraph()
+            
+            # Add root
+            sample_tree.add_node("Root", level=0)
+            
+            # Add sample regions (show all if small, sample if large)
+            regions_to_show = min(num_regions, 3)
+            for r in range(regions_to_show):
+                region = f"R{r}"
+                sample_tree.add_node(region, level=1)
+                sample_tree.add_edge("Root", region)
+                
+                # Add sample cities
+                cities_to_show = min(cities_per_region, 3)
+                for c in range(cities_to_show):
+                    city = f"C{r}_{c}"
+                    sample_tree.add_node(city, level=2)
+                    sample_tree.add_edge(region, city)
+                    
+                    # Add sample users
+                    users_to_show = min(users_per_city, 2)
+                    for u in range(users_to_show):
+                        user = f"U{r}_{c}_{u}"
+                        sample_tree.add_node(user, level=3)
+                        sample_tree.add_edge(city, user)
+            
+            # Calculate positions for tree layout
+            pos = nx.spring_layout(sample_tree, k=2, iterations=50, seed=42)
+            
+            # Create edge trace
+            edge_x = []
+            edge_y = []
+            for edge in sample_tree.edges():
+                x0, y0 = pos[edge[0]]
+                x1, y1 = pos[edge[1]]
+                edge_x.extend([x0, x1, None])
+                edge_y.extend([y0, y1, None])
+            
+            edge_trace = go.Scatter(
+                x=edge_x, y=edge_y,
+                line=dict(width=0.5, color='#888'),
+                hoverinfo='none',
+                mode='lines'
+            )
+            
+            # Create node trace
+            node_x = []
+            node_y = []
+            node_text = []
+            node_color = []
+            
+            for node in sample_tree.nodes():
+                x, y = pos[node]
+                node_x.append(x)
+                node_y.append(y)
+                node_text.append(node)
+                
+                # Color by level
+                level = sample_tree.nodes[node]['level']
+                colors = ['red', 'orange', 'green', 'blue']
+                node_color.append(colors[level])
+            
+            node_trace = go.Scatter(
+                x=node_x, y=node_y,
+                mode='markers+text',
+                text=node_text,
+                textposition="top center",
+                hoverinfo='text',
+                marker=dict(
+                    color=node_color,
+                    size=15,
+                    line_width=2
+                )
+            )
+            
+            # Create figure
+            fig_tree = go.Figure(data=[edge_trace, node_trace],
+                         layout=go.Layout(
+                            title=f'Tree Structure (showing {regions_to_show} regions)',
+                            showlegend=False,
+                            hovermode='closest',
+                            margin=dict(b=0,l=0,r=0,t=40),
+                            xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+                            yaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+                            height=500
+                        ))
+            
+            st.plotly_chart(fig_tree, use_container_width=True)
+            
+            if num_regions > 3:
+                st.info(f"Showing sample of {regions_to_show} regions out of {num_regions} total")
+        
+        # Add hierarchical path visualization
+        st.subheader("📍 Sample Location Paths")
+        
+        # Show some example paths from users to root
+        sample_users = list(sim.user_locations.keys())[:3]  # Show 3 sample users
+        
+        path_data = []
+        for user in sample_users:
+            city = sim.user_locations[user]
+            region = list(sim.G.predecessors(city))[0]
+            
+            path_data.append({
+                'User': user,
+                'Path': f"{user} → {city} → {region} → Root",
+                'Current City': city,
+                'Hops to Root': 3
+            })
+        
+        if path_data:
+            path_df = pd.DataFrame(path_data)
+            st.table(path_df)
     
     with tab4:
         st.header("Forwarding Pointer Analysis")
@@ -567,30 +803,15 @@ if st.session_state.sim_results is not None:
                 
                 metrics_df = pd.DataFrame(metrics_data)
                 st.table(metrics_df)
-            
-        # Replication benefit over time
-        if enable_replication and sim.metrics['replication_benefit']:
-            st.subheader("Replication Benefit Evolution")
-            
-            fig = go.Figure()
-            fig.add_trace(go.Scatter(
-                y=sim.metrics['replication_benefit'],
-                mode='lines+markers',
-                name='Cumulative Benefit',
-                line=dict(color='green' if sim.metrics['replication_benefit'][-1] > 0 else 'red', width=2)
-            ))
-            fig.add_hline(y=0, line_dash="dash", line_color="gray")
-            fig.update_layout(
-                title="Cumulative Replication Benefit Over Time",
-                xaxis_title="Time Step",
-                yaxis_title="Benefit (positive = good)"
-            )
-            st.plotly_chart(fig, use_container_width=True)
         
         # Summary recommendations
         st.subheader("📌 Recommendations")
         
         if enable_replication:
+            search_savings = sim_no_repl.costs['search_without_replication'] - sim.costs['search_with_replication']
+            update_overhead = sim.costs['update_with_replication'] - sim.costs['update_without_replication']
+            net_benefit = search_savings - update_overhead - sim.costs['storage_cost']
+            
             if net_benefit > 0:
                 st.success(f"""
                 ✅ **Replication is beneficial** for this configuration:
@@ -605,46 +826,6 @@ if st.session_state.sim_results is not None:
                 - Consider adjusting the replication threshold
                 - Current threshold: {replication_threshold}
                 """)
-        
-        # Export options
-        st.subheader("📊 Export Analysis")
-        
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            if st.button("Export Cost Analysis"):
-                export_data = pd.DataFrame({
-                    'Metric': ['Search Cost (No Repl)', 'Update Cost (No Repl)',
-                              'Search Cost (With Repl)', 'Update Cost (With Repl)',
-                              'Storage Cost', 'Consistency Cost', 'Net Benefit'],
-                    'Value': [
-                        sim_no_repl.costs['search_without_replication'],
-                        sim_no_repl.costs['update_without_replication'],
-                        sim.costs['search_with_replication'] if enable_replication else 0,
-                        sim.costs['update_with_replication'] if enable_replication else 0,
-                        sim.costs['storage_cost'] if enable_replication else 0,
-                        sim.costs['consistency_maintenance'] if enable_replication else 0,
-                        net_benefit if enable_replication else 0
-                    ]
-                })
-                csv = export_data.to_csv(index=False)
-                st.download_button(
-                    label="Download Cost Analysis CSV",
-                    data=csv,
-                    file_name='replication_cost_analysis.csv',
-                    mime='text/csv'
-                )
-        
-        with col2:
-            if enable_replication and st.button("Export Replication Stats"):
-                repl_stats_df = pd.DataFrame(results['replication_stats'])
-                csv = repl_stats_df.to_csv(index=False)
-                st.download_button(
-                    label="Download Replication Stats CSV",
-                    data=csv,
-                    file_name='replication_statistics.csv',
-                    mime='text/csv'
-                )
 
 else:
     # Welcome screen
@@ -655,30 +836,25 @@ else:
     
     This enhanced hierarchical location management system now includes:
     
+    - **Interactive Map Visualization**: See real-time call connections on a geographic map
+    - **Hierarchical Tree Visualization**: View the network structure as a tree
     - **Selective Replication**: Intelligently replicates user data based on access patterns
-    - **Cost Analysis**: Comprehensive comparison of search vs update costs
-    - **Trade-off Visualization**: Clear visualization of the replication trade-offs
-    - **Multiple Strategies**: CMR-based, access-frequency, and hybrid replication strategies
+    - **Call Pattern Analysis**: Visualize communication patterns between cities
     
-    ### 🎯 New Features
+    ### 🎯 Key Features
     
-    1. **Replication Management**: Dynamic replica placement based on user behavior
-    2. **Cost Tracking**: Detailed cost analysis for search, update, storage, and consistency
-    3. **Benefit Analysis**: Real-time calculation of replication benefits
-    4. **Strategy Comparison**: Side-by-side comparison with and without replication
-    
-    ### 📊 Key Metrics Tracked
-    
-    - **Search Cost**: Cost of finding users (reduced by replicas)
-    - **Update Cost**: Cost of updating locations (increased by replicas)
-    - **Storage Cost**: Cost of maintaining replicas
-    - **Consistency Cost**: Cost of keeping replicas synchronized
-    - **Net Benefit**: Overall benefit of replication strategy
+    1. **Live Call Activity Map**: Shows active calls as lines connecting cities
+    2. **Network Hierarchy Tree**: Visualizes the Root → Region → City → User structure
+    3. **Color-coded Connections**: 
+        - 🟢 Green lines: Calls using replicas (fast)
+        - 🔵 Blue lines: Normal latency calls
+        - 🔴 Red lines: High latency calls
+    4. **Call Intensity Heatmap**: Shows frequency of calls between cities
     
     ### 🚀 Getting Started
     
-    1. Configure network topology
+    1. Configure network topology in the sidebar
     2. Set mobility and call patterns
     3. Enable replication and choose strategy
-    4. Run simulation to see comprehensive analysis!
+    4. Run simulation to see the interactive visualizations!
     """)
