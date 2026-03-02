@@ -116,205 +116,238 @@ if st.session_state.sim_results is not None:
         "⚖️ Trade-off Analysis"
     ])
     
-    with tab1:
+        with tab1:
         st.header("Geographic Distribution & Call Patterns")
         
-        # Create three columns for the maps
-        col1, col2, col3 = st.columns(3)
+        # Map 1: User Distribution
+        st.subheader("🗺️ User Distribution Map")
         
-        with col1:
-            st.subheader("🗺️ User Distribution Map")
+        # Prepare city data
+        city_data = []
+        for city, coords in sim.city_coords.items():
+            user_count = sum(1 for u in sim.user_locations.values() if u == city)
+            region_id = int(city.split('_')[1])
+            city_data.append({
+                'city': city,
+                'lat': coords[0],
+                'lon': coords[1],
+                'users': user_count,
+                'region': f"Region_{region_id}"
+            })
+        
+        city_df = pd.DataFrame(city_data)
+        
+        if not city_df.empty:
+            fig1 = px.scatter_mapbox(
+                city_df,
+                lat="lat",
+                lon="lon",
+                hover_name="city",
+                hover_data={'users': True, 'region': True, 'lat': ':.2f', 'lon': ':.2f'},
+                color="users",
+                size="users",
+                size_max=30,
+                zoom=3.5,
+                center={"lat": 39.0, "lon": -98.0},
+                mapbox_style="open-street-map",
+                title="User Distribution Across Cities",
+                color_continuous_scale="Viridis",
+                labels={'users': 'User Count'},
+                height=600
+            )
+            fig1.update_layout(margin={"r":0,"t":50,"l":0,"b":0})
+            st.plotly_chart(fig1, use_container_width=True)
             
-            # Prepare city data
-            city_data = []
+            # Statistics for User Distribution
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("📍 Total Cities", len(city_df))
+            with col2:
+                st.metric("👥 Total Users", city_df['users'].sum())
+            with col3:
+                st.metric("👥 Avg Users/City", f"{city_df['users'].mean():.1f}")
+        
+        st.markdown("---")
+        
+        # Map 2: Replica Distribution
+        st.subheader("🔄 Replica Distribution Map")
+        
+        if enable_replication:
+            # Prepare replica data
+            replica_data = []
             for city, coords in sim.city_coords.items():
                 user_count = sum(1 for u in sim.user_locations.values() if u == city)
-                region_id = int(city.split('_')[1])
-                city_data.append({
+                replica_count = sum(1 for u, replicas in sim.replica_locations.items() if city in replicas)
+                replica_data.append({
                     'city': city,
                     'lat': coords[0],
                     'lon': coords[1],
+                    'replicas': replica_count,
                     'users': user_count,
-                    'region': f"Region_{region_id}"
+                    'has_replicas': 'Yes' if replica_count > 0 else 'No'
                 })
             
-            city_df = pd.DataFrame(city_data)
+            replica_df = pd.DataFrame(replica_data)
             
-            if not city_df.empty:
-                fig1 = px.scatter_mapbox(
-                    city_df,
+            if not replica_df.empty:
+                fig2 = px.scatter_mapbox(
+                    replica_df,
                     lat="lat",
                     lon="lon",
                     hover_name="city",
-                    hover_data={'users': True, 'region': True, 'lat': ':.2f', 'lon': ':.2f'},
-                    color="users",
-                    size="users",
-                    size_max=25,
-                    zoom=3,
-                    center={"lat": 39.0, "lon": -98.0},  # Center of USA
+                    hover_data={'replicas': True, 'users': True, 'lat': ':.2f', 'lon': ':.2f'},
+                    color="replicas",
+                    size="replicas",
+                    size_max=35,
+                    zoom=3.5,
+                    center={"lat": 39.0, "lon": -98.0},
                     mapbox_style="open-street-map",
-                    title="User Distribution",
-                    color_continuous_scale="Viridis",
-                    labels={'users': 'User Count'}
+                    title="Replica Distribution Across Cities",
+                    color_continuous_scale="Reds",
+                    labels={'replicas': 'Replica Count'},
+                    height=600
                 )
-                fig1.update_layout(height=400, margin={"r":0,"t":30,"l":0,"b":0})
-                st.plotly_chart(fig1, use_container_width=True)
+                # Ensure cities without replicas are still visible
+                fig2.update_traces(marker=dict(sizemin=5))
+                fig2.update_layout(margin={"r":0,"t":50,"l":0,"b":0})
+                st.plotly_chart(fig2, use_container_width=True)
                 
-                # Show statistics
-                st.info(f"📍 Total Cities: {len(city_df)}")
-                st.info(f"👥 Total Users: {city_df['users'].sum()}")
+                # Statistics for Replica Distribution
+                col1, col2, col3 = st.columns(3)
+                total_replicas = replica_df['replicas'].sum()
+                cities_with_replicas = len(replica_df[replica_df['replicas'] > 0])
+                with col1:
+                    st.metric("💾 Total Replicas", total_replicas)
+                with col2:
+                    st.metric("🏙️ Cities with Replicas", cities_with_replicas)
+                with col3:
+                    if cities_with_replicas > 0:
+                        st.metric("💾 Avg Replicas/City", f"{total_replicas/cities_with_replicas:.1f}")
+        else:
+            st.info("Enable replication to see replica distribution")
         
-        with col2:
-            st.subheader("🔄 Replica Distribution")
-            
-            if enable_replication:
-                # Prepare replica data
-                replica_data = []
-                for city, coords in sim.city_coords.items():
-                    replica_count = sum(1 for u, replicas in sim.replica_locations.items() if city in replicas)
-                    if replica_count > 0 or True:  # Show all cities
-                        replica_data.append({
-                            'city': city,
-                            'lat': coords[0],
-                            'lon': coords[1],
-                            'replicas': replica_count
-                        })
-                
-                replica_df = pd.DataFrame(replica_data)
-                
-                if not replica_df.empty:
-                    fig2 = px.scatter_mapbox(
-                        replica_df,
-                        lat="lat",
-                        lon="lon",
-                        hover_name="city",
-                        hover_data={'replicas': True, 'lat': ':.2f', 'lon': ':.2f'},
-                        color="replicas",
-                        size="replicas",
-                        size_max=30,
-                        zoom=3,
-                        center={"lat": 39.0, "lon": -98.0},
-                        mapbox_style="open-street-map",
-                        title="Replica Distribution",
-                        color_continuous_scale="Reds",
-                        labels={'replicas': 'Replica Count'}
-                    )
-                    # Add zero-size markers for cities without replicas
-                    fig2.update_traces(marker=dict(sizemin=5))
-                    fig2.update_layout(height=400, margin={"r":0,"t":30,"l":0,"b":0})
-                    st.plotly_chart(fig2, use_container_width=True)
-                    
-                    # Show statistics
-                    total_replicas = replica_df['replicas'].sum()
-                    cities_with_replicas = len(replica_df[replica_df['replicas'] > 0])
-                    st.info(f"💾 Total Replicas: {total_replicas}")
-                    st.info(f"🏙️ Cities with Replicas: {cities_with_replicas}")
-            else:
-                st.info("Enable replication to see replica distribution")
+        st.markdown("---")
         
-        with col3:
-            st.subheader("📞 Call Patterns")
+        # Map 3: Call Patterns
+        st.subheader("📞 Call Patterns Map")
+        
+        # Get call data for visualization
+        call_data = sim.get_call_data_for_map()
+        
+        if call_data:
+            call_df = pd.DataFrame(call_data)
             
-            # Get call data for visualization
-            call_data = sim.get_call_data_for_map()
+            # Create map with call lines
+            fig3 = go.Figure()
             
-            if call_data:
-                call_df = pd.DataFrame(call_data)
-                
-                # Create map with call lines
-                fig3 = go.Figure()
-                
-                # Add city markers first
-                for _, city in city_df.iterrows():
-                    fig3.add_trace(go.Scattermapbox(
-                        lon=[city['lon']],
-                        lat=[city['lat']],
-                        mode='markers',
-                        marker=dict(size=8, color='lightblue'),
-                        name=city['city'],
-                        hovertext=f"{city['city']}: {city['users']} users",
-                        showlegend=False
-                    ))
-                
-                # Add call lines with color based on latency
-                for _, call in call_df.iterrows():
-                    if call['latency'] <= 2:
-                        color = 'green'
-                        width = 1
-                    elif call['latency'] <= 4:
-                        color = 'orange'
-                        width = 1.5
-                    else:
-                        color = 'red'
-                        width = 2
-                    
-                    fig3.add_trace(go.Scattermapbox(
-                        mode='lines',
-                        lon=[call['lon1'], call['lon2']],
-                        lat=[call['lat1'], call['lat2']],
-                        line=dict(width=width, color=color),
-                        hovertext=f"Latency: {call['latency']} hops",
-                        showlegend=False,
-                        opacity=0.6
-                    ))
-                
-                # Add legend traces
+            # Add city markers first
+            for _, city in city_df.iterrows():
                 fig3.add_trace(go.Scattermapbox(
-                    lon=[None], lat=[None],
+                    lon=[city['lon']],
+                    lat=[city['lat']],
                     mode='markers',
-                    marker=dict(size=10, color='green'),
-                    name='Low Latency (1-2 hops)'
+                    marker=dict(size=10, color='lightblue'),
+                    name=city['city'],
+                    hovertext=f"{city['city']}: {city['users']} users",
+                    showlegend=False
                 ))
-                fig3.add_trace(go.Scattermapbox(
-                    lon=[None], lat=[None],
-                    mode='markers',
-                    marker=dict(size=10, color='orange'),
-                    name='Med Latency (3-4 hops)'
-                ))
-                fig3.add_trace(go.Scattermapbox(
-                    lon=[None], lat=[None],
-                    mode='markers',
-                    marker=dict(size=10, color='red'),
-                    name='High Latency (5+ hops)'
-                ))
+            
+            # Count calls by latency category
+            low_latency_calls = 0
+            med_latency_calls = 0
+            high_latency_calls = 0
+            
+            # Add call lines with color based on latency
+            for _, call in call_df.iterrows():
+                if call['latency'] <= 2:
+                    color = 'green'
+                    width = 1.5
+                    low_latency_calls += 1
+                elif call['latency'] <= 4:
+                    color = 'orange'
+                    width = 2
+                    med_latency_calls += 1
+                else:
+                    color = 'red'
+                    width = 2.5
+                    high_latency_calls += 1
                 
-                fig3.update_layout(
-                    mapbox=dict(
-                        style="open-street-map",
-                        zoom=3,
-                        center=dict(lat=39.0, lon=-98.0)
-                    ),
-                    title="Call Patterns Map",
-                    height=400,
-                    margin={"r":0,"t":30,"l":0,"b":0},
-                    showlegend=True,
-                    legend=dict(
-                        yanchor="top",
-                        y=0.99,
-                        xanchor="left",
-                        x=0.01,
-                        bgcolor="rgba(255,255,255,0.8)"
-                    )
+                fig3.add_trace(go.Scattermapbox(
+                    mode='lines',
+                    lon=[call['lon1'], call['lon2']],
+                    lat=[call['lat1'], call['lat2']],
+                    line=dict(width=width, color=color),
+                    hovertext=f"Latency: {call['latency']} hops",
+                    showlegend=False,
+                    opacity=0.7
+                ))
+            
+            # Add legend traces
+            fig3.add_trace(go.Scattermapbox(
+                lon=[None], lat=[None],
+                mode='markers',
+                marker=dict(size=10, color='green'),
+                name=f'Low Latency (1-2 hops): {low_latency_calls} calls'
+            ))
+            fig3.add_trace(go.Scattermapbox(
+                lon=[None], lat=[None],
+                mode='markers',
+                marker=dict(size=10, color='orange'),
+                name=f'Medium Latency (3-4 hops): {med_latency_calls} calls'
+            ))
+            fig3.add_trace(go.Scattermapbox(
+                lon=[None], lat=[None],
+                mode='markers',
+                marker=dict(size=10, color='red'),
+                name=f'High Latency (5+ hops): {high_latency_calls} calls'
+            ))
+            
+            fig3.update_layout(
+                mapbox=dict(
+                    style="open-street-map",
+                    zoom=3.5,
+                    center=dict(lat=39.0, lon=-98.0)
+                ),
+                title="Call Patterns and Latency Visualization",
+                height=600,
+                margin={"r":0,"t":50,"l":0,"b":0},
+                showlegend=True,
+                legend=dict(
+                    yanchor="top",
+                    y=0.99,
+                    xanchor="left",
+                    x=0.01,
+                    bgcolor="rgba(255,255,255,0.9)",
+                    bordercolor="black",
+                    borderwidth=1
                 )
-                st.plotly_chart(fig3, use_container_width=True)
-                
-                # Show statistics
-                if len(call_df) > 0:
-                    avg_latency = call_df['latency'].mean()
-                    st.info(f"📊 Sample Calls: {len(call_df)}")
-                    st.info(f"⚡ Avg Latency: {avg_latency:.1f} hops")
-            else:
-                st.info("No calls to display yet")
+            )
+            st.plotly_chart(fig3, use_container_width=True)
+            
+            # Statistics for Call Patterns
+            col1, col2, col3 = st.columns(3)
+            if len(call_df) > 0:
+                avg_latency = call_df['latency'].mean()
+                with col1:
+                    st.metric("📊 Sample Calls Shown", len(call_df))
+                with col2:
+                    st.metric("⚡ Average Latency", f"{avg_latency:.1f} hops")
+                with col3:
+                    st.metric("📞 Total Calls Made", len(results['calls']))
+        else:
+            st.info("No calls to display yet. Run the simulation to generate call data.")
         
-        # Add a combined view below the three maps
-        st.subheader("📊 Combined Network View")
+        st.markdown("---")
+        
+        # Map 4: Combined Network View
+        st.subheader("📊 Combined Network Overview")
         
         # Create a comprehensive map showing all elements
         fig_combined = go.Figure()
         
-        # Add cities as base layer
+        # Base layer: Cities with size based on users
         for _, city in city_df.iterrows():
-            size = 10 + city['users']  # Size based on users
+            size = 15 + (city['users'] / city_df['users'].max()) * 20
             fig_combined.add_trace(go.Scattermapbox(
                 lon=[city['lon']],
                 lat=[city['lat']],
@@ -322,33 +355,78 @@ if st.session_state.sim_results is not None:
                 marker=dict(
                     size=size,
                     color='blue',
-                    opacity=0.6
+                    opacity=0.7,
+                    line=dict(width=1, color='darkblue')
                 ),
-                text=f"C{city['city'].split('_')[2]}",
-                textposition="top center",
+                text=f"{city['city'].split('_')[2]}",
+                textfont=dict(size=10, color='white'),
+                textposition="middle center",
                 name='Cities',
-                hovertext=f"{city['city']}<br>Users: {city['users']}",
+                hovertext=f"{city['city']}<br>Users: {city['users']}<br>Region: {city['region']}",
                 showlegend=False
             ))
         
-        # Add replicas as overlay
+        # Overlay: Replicas
         if enable_replication:
+            replica_cities = []
             for city, coords in sim.city_coords.items():
                 replica_count = sum(1 for u, replicas in sim.replica_locations.items() if city in replicas)
                 if replica_count > 0:
+                    replica_cities.append({
+                        'city': city,
+                        'lon': coords[1],
+                        'lat': coords[0],
+                        'count': replica_count
+                    })
+            
+            if replica_cities:
+                replica_overlay_df = pd.DataFrame(replica_cities)
+                for _, replica in replica_overlay_df.iterrows():
+                    size = 20 + (replica['count'] / replica_overlay_df['count'].max()) * 25
                     fig_combined.add_trace(go.Scattermapbox(
-                        lon=[coords[1]],
-                        lat=[coords[0]],
+                        lon=[replica['lon']],
+                        lat=[replica['lat']],
                         mode='markers',
                         marker=dict(
-                            size=10 + replica_count * 3,
+                            size=size,
                             color='red',
-                            opacity=0.4
+                            opacity=0.4,
+                            line=dict(width=2, color='darkred')
                         ),
                         name='Replicas',
-                        hovertext=f"Replicas: {replica_count}",
+                        hovertext=f"{replica['city']}<br>Replicas: {replica['count']}",
                         showlegend=False
                     ))
+        
+        # Add sample call connections (lighter to not overcrowd)
+        if call_data and len(call_data) > 0:
+            sample_calls = call_df.sample(n=min(20, len(call_df)))
+            for _, call in sample_calls.iterrows():
+                color = 'rgba(0,255,0,0.3)' if call['latency'] <= 2 else 'rgba(255,165,0,0.3)' if call['latency'] <= 4 else 'rgba(255,0,0,0.3)'
+                fig_combined.add_trace(go.Scattermapbox(
+                    mode='lines',
+                    lon=[call['lon1'], call['lon2']],
+                    lat=[call['lat1'], call['lat2']],
+                    line=dict(width=1, color=color),
+                    showlegend=False,
+                    hovertext=f"Call latency: {call['latency']} hops"
+                ))
+        
+        # Add legend items
+        fig_combined.add_trace(go.Scattermapbox(
+            lon=[None], lat=[None],
+            mode='markers',
+            marker=dict(size=15, color='blue'),
+            name='Cities (size = users)'
+        ))
+        
+        if enable_replication:
+            fig_combined.add_trace(go.Scattermapbox(
+                lon=[None], lat=[None],
+                mode='markers',
+                marker=dict(size=15, color='red', opacity=0.4),
+                name='Replica Locations'
+            ))
         
         fig_combined.update_layout(
             mapbox=dict(
@@ -362,12 +440,38 @@ if st.session_state.sim_results is not None:
                     north=50
                 )
             ),
-            title="Hierarchical Network Overview",
-            height=500,
-            margin={"r":0,"t":30,"l":0,"b":0}
+            title="Complete Hierarchical Network Visualization",
+            height=700,
+            margin={"r":0,"t":50,"l":0,"b":0},
+            showlegend=True,
+            legend=dict(
+                yanchor="top",
+                y=0.99,
+                xanchor="right",
+                x=0.99,
+                bgcolor="rgba(255,255,255,0.9)",
+                bordercolor="black",
+                borderwidth=1
+            )
         )
         
         st.plotly_chart(fig_combined, use_container_width=True)
+        
+        # Summary statistics for the combined view
+        st.subheader("📊 Network Summary")
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            st.info(f"🌐 Total Network Nodes: {1 + num_regions + len(city_df) + total_users}")
+        with col2:
+            st.info(f"📡 Active Connections: {len(results['calls'])}")
+        with col3:
+            if enable_replication:
+                st.info(f"💾 Replication Coverage: {(cities_with_replicas/len(city_df)*100):.1f}%")
+            else:
+                st.info(f"🔄 Forwarding Enabled: {max_forwarding_chain} levels")
+        with col4:
+            if sim.metrics['updates'] > 0:
+                st.info(f"📈 System CMR: {sim.metrics['queries']/sim.metrics['updates']:.2f}")
     
     with tab2:
         st.header("Performance Metrics")
