@@ -339,7 +339,7 @@ if st.session_state.sim_results is not None:
         
         st.markdown("---")
         
-                # Map 4: Combined Network View
+                        # Map 4: Combined Network View
         st.subheader("📊 Combined Network Overview")
         
         # Create a comprehensive map showing all elements
@@ -351,16 +351,15 @@ if st.session_state.sim_results is not None:
             fig_combined.add_trace(go.Scattermapbox(
                 lon=[city['lon']],
                 lat=[city['lat']],
-                mode='markers+text',
+                mode='markers',
                 marker=dict(
                     size=size,
                     color='blue',
-                    opacity=0.7,
-                    line=dict(width=1, color='darkblue')
+                    opacity=0.7
                 ),
-                text=f"{city['city'].split('_')[2]}",
-                textposition="top center",
+                text=city['city'],
                 name='Cities',
+                hoverinfo='text',
                 hovertext=f"{city['city']}<br>Users: {city['users']}<br>Region: {city['region']}",
                 showlegend=False
             ))
@@ -389,10 +388,10 @@ if st.session_state.sim_results is not None:
                         marker=dict(
                             size=size,
                             color='red',
-                            opacity=0.4,
-                            line=dict(width=2, color='darkred')
+                            opacity=0.4
                         ),
                         name='Replicas',
+                        hoverinfo='text',
                         hovertext=f"{replica['city']}<br>Replicas: {replica['count']}",
                         showlegend=False
                     ))
@@ -401,13 +400,20 @@ if st.session_state.sim_results is not None:
         if call_data and len(call_data) > 0:
             sample_calls = call_df.sample(n=min(20, len(call_df)))
             for _, call in sample_calls.iterrows():
-                color = 'rgba(0,255,0,0.3)' if call['latency'] <= 2 else 'rgba(255,165,0,0.3)' if call['latency'] <= 4 else 'rgba(255,0,0,0.3)'
+                if call['latency'] <= 2:
+                    color = 'rgba(0,255,0,0.3)'
+                elif call['latency'] <= 4:
+                    color = 'rgba(255,165,0,0.3)'
+                else:
+                    color = 'rgba(255,0,0,0.3)'
+                    
                 fig_combined.add_trace(go.Scattermapbox(
                     mode='lines',
                     lon=[call['lon1'], call['lon2']],
                     lat=[call['lat1'], call['lat2']],
                     line=dict(width=1, color=color),
                     showlegend=False,
+                    hoverinfo='text',
                     hovertext=f"Call latency: {call['latency']} hops"
                 ))
         
@@ -431,13 +437,7 @@ if st.session_state.sim_results is not None:
             mapbox=dict(
                 style="open-street-map",
                 zoom=3.5,
-                center=dict(lat=39.0, lon=-98.0),
-                bounds=dict(
-                    west=-125,
-                    east=-65,
-                    south=25,
-                    north=50
-                )
+                center=dict(lat=39.0, lon=-98.0)
             ),
             title="Complete Hierarchical Network Visualization",
             height=700,
@@ -460,15 +460,19 @@ if st.session_state.sim_results is not None:
         st.subheader("📊 Network Summary")
         col1, col2, col3, col4 = st.columns(4)
         
-        # Fix the total users variable reference
+        # Calculate values needed
         total_users_count = city_df['users'].sum()
+        cities_with_replicas = 0
+        if enable_replication:
+            cities_with_replicas = sum(1 for city in sim.city_coords 
+                                     if any(city in replicas for replicas in sim.replica_locations.values()))
         
         with col1:
             st.info(f"🌐 Total Network Nodes: {1 + num_regions + len(city_df) + total_users_count}")
         with col2:
             st.info(f"📡 Active Connections: {len(results['calls'])}")
         with col3:
-            if enable_replication and 'cities_with_replicas' in locals():
+            if enable_replication:
                 st.info(f"💾 Replication Coverage: {(cities_with_replicas/len(city_df)*100):.1f}%")
             else:
                 st.info(f"🔄 Forwarding Enabled: {max_forwarding_chain} levels")
