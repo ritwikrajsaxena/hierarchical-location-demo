@@ -98,9 +98,11 @@ class HierarchicalSimulator:
             attempts = 0
             while attempts < 50:
                 lat = region_info['lat_center'] + np.random.uniform(
-                    -region_info['lat_range'] / 2, region_info['lat_range'] / 2)
+                    -region_info['lat_range'] / 2,
+                    region_info['lat_range'] / 2)
                 lon = region_info['lon_center'] + np.random.uniform(
-                    -region_info['lon_range'] / 2, region_info['lon_range'] / 2)
+                    -region_info['lon_range'] / 2,
+                    region_info['lon_range'] / 2)
                 if is_valid_us_coordinate(lat, lon):
                     break
                 attempts += 1
@@ -159,9 +161,12 @@ class HierarchicalSimulator:
 class EnhancedHierarchicalSimulator:
     """Enhanced simulator with multi-level forwarding pointers and replication.
 
-    Key fix: both 'with replication' and 'without replication' latencies are
-    computed for every single call *inside the same simulation run* so the
-    comparison is always apples-to-apples (same movements, same calls).
+    Key design:
+    - Both with-replication and without-replication latencies computed for
+      every call inside the SAME simulation run
+    - Minimum latency = 1 for any lookup (always costs at least 1 hop)
+    - Replica freshness is tracked: stale replicas incur extra penalty
+    - Mobility directly affects replication effectiveness
     """
 
     def __init__(self, num_regions=4, cities_per_region=5, users_per_city=10,
@@ -186,9 +191,15 @@ class EnhancedHierarchicalSimulator:
             'region': defaultdict(list),
             'root': defaultdict(list)
         }
+
+        # Replication data
         self.replica_locations = defaultdict(set)
+        # Track WHAT location each replica stores (for staleness check)
+        self.replica_stored_location = defaultdict(dict)
         self.access_frequency_matrix = defaultdict(lambda: defaultdict(int))
         self.replica_access_history = defaultdict(list)
+
+        # Cost tracking
         self.costs = {
             'search_without_replication': 0,
             'search_with_replication': 0,
@@ -200,21 +211,34 @@ class EnhancedHierarchicalSimulator:
             'update_costs_per_step': [],
             'replication_decisions': []
         }
+
+        # Performance metrics
         self.metrics = {
             'queries': 0,
             'updates': 0,
             'forwarding_hits': defaultdict(int),
             'replica_hits': 0,
+            'replica_stale_hits': 0,
             'latency_history': [],
             'latency_no_repl_history': [],
             'cmr_history': [],
             'replication_benefit': [],
-            'replica_count_history': []
+            'replica_count_history': [],
+            'users_moved_this_step': []
         }
+
+        # User patterns
         self.user_call_frequency = defaultdict(int)
         self.user_mobility_frequency = defaultdict(int)
         self.user_call_sources = defaultdict(lambda: defaultdict(int))
+
+        # Track which users moved this step (for staleness)
+        self.moved_this_step = set()
+
+        # Coordinates
         self.city_coords = {}
+
+        # Build network
         self._build_hierarchy()
         self._assign_users()
         self._assign_coordinates()
@@ -287,9 +311,11 @@ class EnhancedHierarchicalSimulator:
     def update_replicas(self, user):
         if not self.enable_replication:
             return
+
         access_nodes = self.user_call_sources[user]
         if not access_nodes:
             return
+
         calls = self.user_call_frequency[user]
         moves = max(self.user_mobility_frequency[user], 1)
         cmr = calls / moves
@@ -313,9 +339,12 @@ class EnhancedHierarchicalSimulator:
         replica_candidates.sort(key=lambda x: x[1], reverse=True)
         old_replicas = len(self.replica_locations[user])
         self.replica_locations[user].clear()
+        self.replica_stored_location[user].clear()
 
         for node, benefit, freq in replica_candidates[:self.max_replicas]:
             self.replica_locations[user].add(node)
+            # Store the CURRENT location in the replica
+            self.replica_stored_location[user][node] = self.user_locations[user]
 
         new_replicas = len(self.replica_locations[user])
         self.costs['storage_cost'] += new_replicas
@@ -327,25 +356,39 @@ class EnhancedHierarchicalSimulator:
             'cmr': cmr
         })
 
+    def is_replica_fresh(self, user, replica_node):
+        """Check if the replica at replica_node has the correct location"""
+        if replica_node not in self.replica_stored_location[user]:
+            return False
+        stored_loc = self.replica_stored_location[user][replica_node]
+        actual_loc = self.user_locations[user]
+        return stored_loc == actual_loc
+
     # ------------------------------------------------------------------
-    # LATENCY – forwarding-pointer-only (baseline)
+    # LATENCY – forwarding-pointer-only (baseline, no side effects)
     # ------------------------------------------------------------------
     def _forwarding_latency(self, caller, callee):
         """Return the latency using ONLY forwarding pointers (no replicas).
 
-        This method does **not** mutate any metrics so it can be called as a
-        side-effect-free comparison alongside the replication-aware path.
+        MINIMUM latency = 1 (always costs at least 1 hop to query home).
         """
         home_city = self.user_home_locations[callee]
+        actual_city = self.user_locations[callee]
+
+        # If callee is at home, just query home location register
+        if home_city == actual_city:
+            return 1  # Minimum 1 hop to query
+
+        # Callee has moved, try forwarding pointers
         current = home_city
-        latency = 0
+        latency = 1  # Start with 1 for initial query to home
 
         # City-level
         if home_city in self.forwarding_pointers['city']:
             for ptr in self.forwarding_pointers['city'][home_city]:
                 if ptr['user'] == callee:
                     current = ptr['new_location']
-                    latency += 1
+                    latency += 1  # Follow city pointer
                     break
 
         # Region-level
@@ -355,7 +398,7 @@ class EnhancedHierarchicalSimulator:
                 for ptr in self.forwarding_pointers['region'][home_region]:
                     if ptr['user'] == callee:
                         current = ptr['new_location']
-                        latency += 2
+                        latency += 2  # Go up to region
                         break
 
         # Root-level
@@ -364,12 +407,12 @@ class EnhancedHierarchicalSimulator:
                 for ptr in self.forwarding_pointers['root']['Root']:
                     if ptr['user'] == callee:
                         current = ptr['new_location']
-                        latency += 3
+                        latency += 3  # Go up to root
                         break
 
-        # Exhaustive
-        if current != self.user_locations[callee]:
-            latency += 5
+        # Exhaustive search
+        if current != actual_city:
+            latency += 4  # Additional penalty for exhaustive search
 
         return latency
 
@@ -377,12 +420,20 @@ class EnhancedHierarchicalSimulator:
     # LATENCY – with forwarding pointers (mutating version for metrics)
     # ------------------------------------------------------------------
     def find_user_with_forwarding(self, caller, callee):
-        latency = 0
-        queries = 0
+        """Find user with forwarding pointers. Minimum latency = 1."""
         home_city = self.user_home_locations[callee]
+        actual_city = self.user_locations[callee]
         current = home_city
         levels_checked = []
+        latency = 1  # Minimum: query home location register
+        queries = 1
 
+        # If user is at home, done
+        if home_city == actual_city:
+            self.metrics['queries'] += queries
+            return latency, levels_checked
+
+        # City-level check
         if home_city in self.forwarding_pointers['city']:
             for ptr in self.forwarding_pointers['city'][home_city]:
                 if ptr['user'] == callee:
@@ -393,6 +444,7 @@ class EnhancedHierarchicalSimulator:
                     queries += 1
                     break
 
+        # Region-level check
         if current == home_city:
             home_region = list(self.G.predecessors(home_city))[0]
             if home_region in self.forwarding_pointers['region']:
@@ -405,6 +457,7 @@ class EnhancedHierarchicalSimulator:
                         queries += 2
                         break
 
+        # Root-level check
         if current == home_city:
             if 'Root' in self.forwarding_pointers['root']:
                 for ptr in self.forwarding_pointers['root']['Root']:
@@ -416,9 +469,10 @@ class EnhancedHierarchicalSimulator:
                         queries += 3
                         break
 
-        if current != self.user_locations[callee]:
-            latency += 5
-            queries += 10
+        # Exhaustive search
+        if current != actual_city:
+            latency += 4
+            queries += 5
 
         self.metrics['queries'] += queries
         return latency, levels_checked
@@ -427,34 +481,54 @@ class EnhancedHierarchicalSimulator:
     # LATENCY – replication-aware wrapper
     # ------------------------------------------------------------------
     def find_user_with_replication(self, caller, callee):
+        """Find user using replicas first, then forwarding pointers.
+
+        Replica freshness is checked:
+        - Fresh replica: latency = 1 (local lookup)
+        - Stale replica: latency = 1 (check) + forwarding search (penalty)
+        - No replica: standard forwarding search
+        """
         caller_city = self.user_locations[caller]
 
+        # Track access patterns
         self.user_call_sources[callee][caller_city] += 1
         self.access_frequency_matrix[callee][caller_city] += 1
 
-        # Check local replica
-        if self.enable_replication and caller_city in self.replica_locations[callee]:
-            self.metrics['replica_hits'] += 1
-            self.costs['search_with_replication'] += 1
-            return 1, ['replica']
+        # --- Check local replica (same city) ---
+        if (self.enable_replication
+                and caller_city in self.replica_locations[callee]):
+            if self.is_replica_fresh(callee, caller_city):
+                # FRESH replica: instant lookup
+                self.metrics['replica_hits'] += 1
+                self.costs['search_with_replication'] += 1
+                return 1, ['replica']
+            else:
+                # STALE replica: wasted 1 hop checking, then full search
+                self.metrics['replica_stale_hits'] += 1
+                latency, levels = self.find_user_with_forwarding(caller, callee)
+                stale_latency = 1 + latency  # Penalty for checking stale
+                self.costs['search_with_replication'] += stale_latency
+                return stale_latency, ['stale_replica'] + levels
 
-        # Check region-level replica
+        # --- Check region-level replica ---
         if self.enable_replication:
             caller_region = list(self.G.predecessors(caller_city))[0]
             for rc in self.G.successors(caller_region):
                 if rc in self.replica_locations[callee]:
-                    self.metrics['replica_hits'] += 1
-                    self.costs['search_with_replication'] += 2
-                    return 2, ['replica_region']
+                    if self.is_replica_fresh(callee, rc):
+                        # Fresh region replica
+                        self.metrics['replica_hits'] += 1
+                        self.costs['search_with_replication'] += 2
+                        return 2, ['replica_region']
+                    # Stale region replica: skip and try forwarding
+                    break
 
-        # Fall back to forwarding pointers
+        # --- No replica: standard forwarding search ---
         latency, levels = self.find_user_with_forwarding(caller, callee)
-
         if self.enable_replication:
             self.costs['search_with_replication'] += latency
         else:
             self.costs['search_without_replication'] += latency
-
         return latency, levels
 
     # ------------------------------------------------------------------
@@ -482,15 +556,22 @@ class EnhancedHierarchicalSimulator:
         old_city = self.user_locations[user]
         if old_city == new_city:
             return
+
         self.metrics['updates'] += 1
         self.user_mobility_frequency[user] += 1
+        self.moved_this_step.add(user)
 
         base = 1
         self.costs['update_without_replication'] += base
+
         if self.enable_replication:
             rep_cost = len(self.replica_locations[user]) * 0.5
             self.costs['update_with_replication'] += base + rep_cost
             self.costs['consistency_maintenance'] += rep_cost
+
+            # Update stored locations in replicas (consistency update)
+            for replica_node in self.replica_locations[user]:
+                self.replica_stored_location[user][replica_node] = new_city
         else:
             self.costs['update_with_replication'] += base
 
@@ -541,6 +622,9 @@ class EnhancedHierarchicalSimulator:
         step_search_cost = 0
         step_update_cost = 0
 
+        # Reset per-step tracking
+        self.moved_this_step = set()
+
         # Phase 1 – move users
         moved_users = []
         for user in list(self.user_locations.keys()):
@@ -549,6 +633,8 @@ class EnhancedHierarchicalSimulator:
                 self.update_location_with_forwarding(user, new_city)
                 moved_users.append(user)
                 step_update_cost += 1
+
+        self.metrics['users_moved_this_step'].append(len(moved_users))
 
         # Phase 2 – simulate calls
         users = list(self.user_locations.keys())
@@ -566,16 +652,19 @@ class EnhancedHierarchicalSimulator:
             self.user_call_frequency[caller] += 1
             self.user_call_frequency[callee] += 1
 
-            # Latency WITH replication (or forwarding only if disabled)
+            # Latency WITH replication
             latency_with, levels = self.find_user_with_replication(
                 caller, callee)
 
-            # Latency WITHOUT replication (forwarding only, no side effects)
+            # Latency WITHOUT replication (same call, no side effects)
             latency_without = self._forwarding_latency(caller, callee)
 
             total_latency_with += latency_with
             total_latency_without += latency_without
             step_search_cost += latency_with
+
+            # Did the callee move this step?
+            callee_moved = callee in self.moved_this_step
 
             calls.append({
                 'caller': caller,
@@ -585,7 +674,8 @@ class EnhancedHierarchicalSimulator:
                 'forwarding_levels': levels,
                 'optimal_level': self.compute_optimal_level(callee),
                 'used_replica': 'replica' in levels
-                                or 'replica_region' in levels
+                                or 'replica_region' in levels,
+                'callee_moved': callee_moved
             })
 
         # Phase 3 – update replicas AFTER calls
@@ -595,7 +685,7 @@ class EnhancedHierarchicalSimulator:
             for user in moved_users:
                 self.update_replicas(user)
 
-        # record costs
+        # Record costs
         self.costs['search_costs_per_step'].append(step_search_cost)
         self.costs['update_costs_per_step'].append(step_update_cost)
 
@@ -604,18 +694,18 @@ class EnhancedHierarchicalSimulator:
             self.metrics['cmr_history'].append(
                 self.metrics['queries'] / self.metrics['updates'])
 
-        # latency histories
+        # Latency histories
         if calls:
             self.metrics['latency_history'].append(
                 total_latency_with / len(calls))
             self.metrics['latency_no_repl_history'].append(
                 total_latency_without / len(calls))
 
-        # replica count
+        # Replica count
         total_reps = sum(len(r) for r in self.replica_locations.values())
         self.metrics['replica_count_history'].append(total_reps)
 
-        # replication benefit
+        # Replication benefit
         if self.enable_replication:
             s_diff = (self.costs['search_without_replication']
                       - self.costs['search_with_replication'])
@@ -656,7 +746,9 @@ class EnhancedHierarchicalSimulator:
                     'step': step,
                     'total_replicas': tr,
                     'replica_hits': self.metrics['replica_hits'],
-                    'users_with_replicas': ur
+                    'replica_stale_hits': self.metrics['replica_stale_hits'],
+                    'users_with_replicas': ur,
+                    'users_moved': len(moved)
                 })
 
         results['cost_comparison'] = {
@@ -721,11 +813,19 @@ class EnhancedHierarchicalSimulator:
                     lat1, lon1 = self.city_coords[cc]
                     lat2, lon2 = self.city_coords[ce]
                     has_rep = cc in self.replica_locations[callee]
+                    fresh = self.is_replica_fresh(callee, cc) if has_rep else False
+                    if has_rep and fresh:
+                        lat = 1
+                    elif has_rep and not fresh:
+                        lat = 6  # Stale penalty
+                    else:
+                        lat = self._forwarding_latency(caller, callee)
                     call_data.append({
                         'caller': caller, 'callee': callee,
                         'caller_city': cc, 'callee_city': ce,
                         'lat1': lat1, 'lon1': lon1,
                         'lat2': lat2, 'lon2': lon2,
-                        'latency': 1 if has_rep else 5,
-                        'has_replica': has_rep})
+                        'latency': lat,
+                        'has_replica': has_rep,
+                        'replica_fresh': fresh})
         return call_data
