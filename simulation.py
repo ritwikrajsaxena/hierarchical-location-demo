@@ -7,6 +7,47 @@ import seaborn as sns
 from collections import defaultdict, deque
 import math
 
+# USA boundary coordinates
+USA_BOUNDS = {
+    'lat_min': 25.0,  # Southern tip of Florida
+    'lat_max': 48.0,  # Northern border (excluding Alaska)
+    'lon_min': -124.0,  # West coast
+    'lon_max': -67.0   # East coast
+}
+
+# Major US regions with realistic coordinates
+US_REGIONS = {
+    0: {'name': 'West', 'lat_center': 40.0, 'lon_center': -115.0, 'lat_range': 8, 'lon_range': 10},
+    1: {'name': 'Midwest', 'lat_center': 41.0, 'lon_center': -90.0, 'lat_range': 6, 'lon_range': 8},
+    2: {'name': 'South', 'lat_center': 33.0, 'lon_center': -85.0, 'lat_range': 6, 'lon_range': 10},
+    3: {'name': 'Northeast', 'lat_center': 42.0, 'lon_center': -73.0, 'lat_range': 4, 'lon_range': 6},
+    4: {'name': 'Southwest', 'lat_center': 35.0, 'lon_center': -105.0, 'lat_range': 5, 'lon_range': 8},
+    5: {'name': 'Southeast', 'lat_center': 30.0, 'lon_center': -82.0, 'lat_range': 5, 'lon_range': 6},
+    6: {'name': 'Central', 'lat_center': 38.0, 'lon_center': -98.0, 'lat_range': 6, 'lon_range': 8},
+    7: {'name': 'Pacific', 'lat_center': 45.0, 'lon_center': -122.0, 'lat_range': 5, 'lon_range': 5}
+}
+
+# Exclude coordinates that fall in Great Lakes or ocean
+def is_valid_us_coordinate(lat, lon):
+    """Check if coordinate is within continental US and not in Great Lakes"""
+    # Basic USA boundary check
+    if lat < USA_BOUNDS['lat_min'] or lat > USA_BOUNDS['lat_max']:
+        return False
+    if lon < USA_BOUNDS['lon_min'] or lon > USA_BOUNDS['lon_max']:
+        return False
+    
+    # Exclude Great Lakes region (approximate)
+    if 41 < lat < 47 and -92 < lon < -76:
+        if 42 < lat < 46 and -88 < lon < -78:  # Rough Great Lakes area
+            return False
+    
+    # Exclude ocean areas (approximate for East coast)
+    if lon > -75 and lat < 35:  # Southeast ocean area
+        if lon > -78:
+            return False
+    
+    return True
+
 class HierarchicalSimulator:
     """Original simulator class for backward compatibility"""
     def __init__(self, num_regions=4, cities_per_region=5, users_per_city=10,
@@ -49,8 +90,24 @@ class HierarchicalSimulator:
     def _assign_coordinates(self):
         np.random.seed(42)
         for city in [n for n in self.G.nodes if "City" in n]:
-            lat = np.random.uniform(25, 50)
-            lon = np.random.uniform(-125, -65)
+            # Use US_REGIONS for proper coordinates
+            region_id = int(city.split('_')[1])
+            region_info = US_REGIONS[region_id % len(US_REGIONS)]
+            
+            # Generate coordinates within region bounds
+            attempts = 0
+            while attempts < 50:
+                lat = region_info['lat_center'] + np.random.uniform(
+                    -region_info['lat_range']/2, region_info['lat_range']/2
+                )
+                lon = region_info['lon_center'] + np.random.uniform(
+                    -region_info['lon_range']/2, region_info['lon_range']/2
+                )
+                
+                if is_valid_us_coordinate(lat, lon):
+                    break
+                attempts += 1
+            
             self.city_coords[city] = (lat, lon)
 
     def move_users(self):
@@ -111,7 +168,7 @@ class EnhancedHierarchicalSimulator:
                  max_replicas=3, replication_strategy='CMR-based'):
         
         # Basic parameters
-        self.num_regions = num_regions
+        self.num_regions = min(num_regions, len(US_REGIONS))  # Limit to available regions
         self.cities_per_region = cities_per_region
         self.users_per_city = users_per_city
         self.mobility_prob = mobility_prob
@@ -186,7 +243,8 @@ class EnhancedHierarchicalSimulator:
         self.G.add_node("Root", level=0, type='root')
         
         for r in range(self.num_regions):
-            region = f"Region_{r}"
+            region_name = US_REGIONS[r]['name']
+            region = f"Region_{r}_{region_name}"
             self.G.add_node(region, level=1, type='region', region_id=r)
             self.G.add_edge("Root", region)
             
@@ -209,17 +267,39 @@ class EnhancedHierarchicalSimulator:
                 user_id += 1
     
     def _assign_coordinates(self):
-        """Assign geographic coordinates to cities"""
+        """Assign geographic coordinates to cities within USA boundaries"""
         np.random.seed(42)
+        
         for city in [n for n in self.G.nodes if self.G.nodes[n].get('type') == 'city']:
             region_id = self.G.nodes[city]['region_id']
             city_id = self.G.nodes[city]['city_id']
             
-            base_lat = 30 + region_id * 10
-            base_lon = -120 + region_id * 15
+            # Get region information
+            region_info = US_REGIONS[region_id]
             
-            lat = base_lat + np.random.uniform(-5, 5)
-            lon = base_lon + np.random.uniform(-5, 5)
+            # Generate coordinates within the region
+            attempts = 0
+            while attempts < 50:
+                # Add some variation to spread cities within the region
+                lat_offset = np.random.uniform(-region_info['lat_range']/2, region_info['lat_range']/2)
+                lon_offset = np.random.uniform(-region_info['lon_range']/2, region_info['lon_range']/2)
+                
+                lat = region_info['lat_center'] + lat_offset
+                lon = region_info['lon_center'] + lon_offset
+                
+                # Ensure coordinates are valid
+                if is_valid_us_coordinate(lat, lon):
+                    # Add small random perturbation to avoid exact overlap
+                    lat += np.random.uniform(-0.5, 0.5)
+                    lon += np.random.uniform(-0.5, 0.5)
+                    break
+                attempts += 1
+            
+            # If still invalid after attempts, use region center
+            if attempts >= 50:
+                lat = region_info['lat_center'] + np.random.uniform(-1, 1)
+                lon = region_info['lon_center'] + np.random.uniform(-1, 1)
+            
             self.city_coords[city] = (lat, lon)
     
     def calculate_replication_benefit(self, user, node):
@@ -316,7 +396,7 @@ class EnhancedHierarchicalSimulator:
         return latency, levels
     
     def move_user_realistic(self, user):
-        """Realistic mobility model"""
+        """Realistic mobility model - prefer nearby cities"""
         current_city = self.user_locations[user]
         current_coords = self.city_coords[current_city]
         
@@ -332,6 +412,7 @@ class EnhancedHierarchicalSimulator:
                 distances.append(float('inf'))
         
         distances = np.array(distances)
+        # Make nearby cities more likely
         probabilities = 1 / (1 + distances)
         probabilities = probabilities / probabilities.sum()
         
@@ -639,3 +720,37 @@ class EnhancedHierarchicalSimulator:
             })
         
         return analysis
+    
+    def get_call_data_for_map(self):
+        """Get call data formatted for map visualization"""
+        call_data = []
+        
+        # Get a sample of recent calls for visualization
+        sample_size = min(50, len(self.user_call_frequency))
+        sampled_users = list(self.user_call_frequency.keys())[:sample_size]
+        
+        for i, caller in enumerate(sampled_users):
+            for j, callee in enumerate(sampled_users):
+                if i != j and np.random.rand() < 0.1:  # Sample 10% of possible calls
+                    caller_city = self.user_locations[caller]
+                    callee_city = self.user_locations[callee]
+                    
+                    lat1, lon1 = self.city_coords[caller_city]
+                    lat2, lon2 = self.city_coords[callee_city]
+                    
+                    # Calculate latency
+                    latency, _ = self.find_user_with_replication(caller, callee)
+                    
+                    call_data.append({
+                        'caller': caller,
+                        'callee': callee,
+                        'caller_city': caller_city,
+                        'callee_city': callee_city,
+                        'lat1': lat1,
+                        'lon1': lon1,
+                        'lat2': lat2,
+                        'lon2': lon2,
+                        'latency': latency
+                    })
+        
+        return call_data
