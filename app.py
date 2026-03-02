@@ -116,8 +116,8 @@ if st.session_state.sim_results is not None:
         "⚖️ Trade-off Analysis"
     ])
     
-        with tab1:
-        st.header("Geographic Distribution & Call Patterns")
+    with tab1:
+    st.header("Geographic Distribution & Call Patterns")
         
         # Map 1: User Distribution
         st.subheader("🗺️ User Distribution Map")
