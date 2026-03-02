@@ -117,7 +117,7 @@ if st.session_state.sim_results is not None:
     ])
     
     with tab1:
-    st.header("Geographic Distribution & Call Patterns")
+    	st.header("Geographic Distribution & Call Patterns")
         
         # Map 1: User Distribution
         st.subheader("🗺️ User Distribution Map")
