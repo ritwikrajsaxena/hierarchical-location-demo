@@ -339,7 +339,7 @@ if st.session_state.sim_results is not None:
         
         st.markdown("---")
         
-        # Map 4: Combined Network View
+                # Map 4: Combined Network View
         st.subheader("📊 Combined Network Overview")
         
         # Create a comprehensive map showing all elements
@@ -359,8 +359,7 @@ if st.session_state.sim_results is not None:
                     line=dict(width=1, color='darkblue')
                 ),
                 text=f"{city['city'].split('_')[2]}",
-                textfont=dict(size=10, color='white'),
-                textposition="middle center",
+                textposition="top center",
                 name='Cities',
                 hovertext=f"{city['city']}<br>Users: {city['users']}<br>Region: {city['region']}",
                 showlegend=False
@@ -456,6 +455,26 @@ if st.session_state.sim_results is not None:
         )
         
         st.plotly_chart(fig_combined, use_container_width=True)
+        
+        # Summary statistics for the combined view
+        st.subheader("📊 Network Summary")
+        col1, col2, col3, col4 = st.columns(4)
+        
+        # Fix the total users variable reference
+        total_users_count = city_df['users'].sum()
+        
+        with col1:
+            st.info(f"🌐 Total Network Nodes: {1 + num_regions + len(city_df) + total_users_count}")
+        with col2:
+            st.info(f"📡 Active Connections: {len(results['calls'])}")
+        with col3:
+            if enable_replication and 'cities_with_replicas' in locals():
+                st.info(f"💾 Replication Coverage: {(cities_with_replicas/len(city_df)*100):.1f}%")
+            else:
+                st.info(f"🔄 Forwarding Enabled: {max_forwarding_chain} levels")
+        with col4:
+            if sim.metrics['updates'] > 0:
+                st.info(f"📈 System CMR: {sim.metrics['queries']/sim.metrics['updates']:.2f}")
         
         # Summary statistics for the combined view
         st.subheader("📊 Network Summary")
