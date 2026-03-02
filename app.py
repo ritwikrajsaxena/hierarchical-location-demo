@@ -456,29 +456,7 @@ if st.session_state.sim_results is not None:
         
         st.plotly_chart(fig_combined, use_container_width=True)
         
-        # Summary statistics for the combined view
-        st.subheader("📊 Network Summary")
-        col1, col2, col3, col4 = st.columns(4)
         
-        # Calculate values needed
-        total_users_count = city_df['users'].sum()
-        cities_with_replicas = 0
-        if enable_replication:
-            cities_with_replicas = sum(1 for city in sim.city_coords 
-                                     if any(city in replicas for replicas in sim.replica_locations.values()))
-        
-        with col1:
-            st.info(f"🌐 Total Network Nodes: {1 + num_regions + len(city_df) + total_users_count}")
-        with col2:
-            st.info(f"📡 Active Connections: {len(results['calls'])}")
-        with col3:
-            if enable_replication:
-                st.info(f"💾 Replication Coverage: {(cities_with_replicas/len(city_df)*100):.1f}%")
-            else:
-                st.info(f"🔄 Forwarding Enabled: {max_forwarding_chain} levels")
-        with col4:
-            if sim.metrics['updates'] > 0:
-                st.info(f"📈 System CMR: {sim.metrics['queries']/sim.metrics['updates']:.2f}")
         
         # Summary statistics for the combined view
         st.subheader("📊 Network Summary")
