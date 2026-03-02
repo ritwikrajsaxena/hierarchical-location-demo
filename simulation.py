@@ -17,14 +17,22 @@ USA_BOUNDS = {
 
 # Major US regions with realistic coordinates
 US_REGIONS = {
-    0: {'name': 'West', 'lat_center': 40.0, 'lon_center': -115.0, 'lat_range': 8, 'lon_range': 10},
-    1: {'name': 'Midwest', 'lat_center': 41.0, 'lon_center': -90.0, 'lat_range': 6, 'lon_range': 8},
-    2: {'name': 'South', 'lat_center': 33.0, 'lon_center': -85.0, 'lat_range': 6, 'lon_range': 10},
-    3: {'name': 'Northeast', 'lat_center': 42.0, 'lon_center': -73.0, 'lat_range': 4, 'lon_range': 6},
-    4: {'name': 'Southwest', 'lat_center': 35.0, 'lon_center': -105.0, 'lat_range': 5, 'lon_range': 8},
-    5: {'name': 'Southeast', 'lat_center': 30.0, 'lon_center': -82.0, 'lat_range': 5, 'lon_range': 6},
-    6: {'name': 'Central', 'lat_center': 38.0, 'lon_center': -98.0, 'lat_range': 6, 'lon_range': 8},
-    7: {'name': 'Pacific', 'lat_center': 45.0, 'lon_center': -122.0, 'lat_range': 5, 'lon_range': 5}
+    0: {'name': 'West', 'lat_center': 40.0, 'lon_center': -115.0,
+        'lat_range': 8, 'lon_range': 10},
+    1: {'name': 'Midwest', 'lat_center': 41.0, 'lon_center': -90.0,
+        'lat_range': 6, 'lon_range': 8},
+    2: {'name': 'South', 'lat_center': 33.0, 'lon_center': -85.0,
+        'lat_range': 6, 'lon_range': 10},
+    3: {'name': 'Northeast', 'lat_center': 42.0, 'lon_center': -73.0,
+        'lat_range': 4, 'lon_range': 6},
+    4: {'name': 'Southwest', 'lat_center': 35.0, 'lon_center': -105.0,
+        'lat_range': 5, 'lon_range': 8},
+    5: {'name': 'Southeast', 'lat_center': 30.0, 'lon_center': -82.0,
+        'lat_range': 5, 'lon_range': 6},
+    6: {'name': 'Central', 'lat_center': 38.0, 'lon_center': -98.0,
+        'lat_range': 6, 'lon_range': 8},
+    7: {'name': 'Pacific', 'lat_center': 45.0, 'lon_center': -122.0,
+        'lat_range': 5, 'lon_range': 5}
 }
 
 
@@ -90,11 +98,9 @@ class HierarchicalSimulator:
             attempts = 0
             while attempts < 50:
                 lat = region_info['lat_center'] + np.random.uniform(
-                    -region_info['lat_range'] / 2, region_info['lat_range'] / 2
-                )
+                    -region_info['lat_range'] / 2, region_info['lat_range'] / 2)
                 lon = region_info['lon_center'] + np.random.uniform(
-                    -region_info['lon_range'] / 2, region_info['lon_range'] / 2
-                )
+                    -region_info['lon_range'] / 2, region_info['lon_range'] / 2)
                 if is_valid_us_coordinate(lat, lon):
                     break
                 attempts += 1
@@ -151,7 +157,12 @@ class HierarchicalSimulator:
 
 
 class EnhancedHierarchicalSimulator:
-    """Enhanced simulator with multi-level forwarding pointers and replication"""
+    """Enhanced simulator with multi-level forwarding pointers and replication.
+
+    Key fix: both 'with replication' and 'without replication' latencies are
+    computed for every single call *inside the same simulation run* so the
+    comparison is always apples-to-apples (same movements, same calls).
+    """
 
     def __init__(self, num_regions=4, cities_per_region=5, users_per_city=10,
                  mobility_prob=0.1, call_prob=0.3, max_forwarding_chain=3,
@@ -195,6 +206,7 @@ class EnhancedHierarchicalSimulator:
             'forwarding_hits': defaultdict(int),
             'replica_hits': 0,
             'latency_history': [],
+            'latency_no_repl_history': [],
             'cmr_history': [],
             'replication_benefit': [],
             'replica_count_history': []
@@ -207,8 +219,10 @@ class EnhancedHierarchicalSimulator:
         self._assign_users()
         self._assign_coordinates()
 
+    # ------------------------------------------------------------------
+    # HIERARCHY SETUP
+    # ------------------------------------------------------------------
     def _build_hierarchy(self):
-        """Build the hierarchical tree structure"""
         self.G.add_node("Root", level=0, type='root')
         for r in range(self.num_regions):
             region_name = US_REGIONS[r]['name']
@@ -222,9 +236,9 @@ class EnhancedHierarchicalSimulator:
                 self.G.add_edge(region, city)
 
     def _assign_users(self):
-        """Assign users to cities initially"""
         user_id = 0
-        for city in [n for n in self.G.nodes if self.G.nodes[n].get('type') == 'city']:
+        for city in [n for n in self.G.nodes
+                     if self.G.nodes[n].get('type') == 'city']:
             for _ in range(self.users_per_city):
                 user = f"User_{user_id}"
                 self.G.add_node(user, level=3, type='user', home_city=city)
@@ -234,21 +248,19 @@ class EnhancedHierarchicalSimulator:
                 user_id += 1
 
     def _assign_coordinates(self):
-        """Assign geographic coordinates to cities within USA boundaries"""
         np.random.seed(42)
-        for city in [n for n in self.G.nodes if self.G.nodes[n].get('type') == 'city']:
+        for city in [n for n in self.G.nodes
+                     if self.G.nodes[n].get('type') == 'city']:
             region_id = self.G.nodes[city]['region_id']
             region_info = US_REGIONS[region_id]
             attempts = 0
             while attempts < 50:
-                lat_offset = np.random.uniform(
-                    -region_info['lat_range'] / 2, region_info['lat_range'] / 2
-                )
-                lon_offset = np.random.uniform(
-                    -region_info['lon_range'] / 2, region_info['lon_range'] / 2
-                )
-                lat = region_info['lat_center'] + lat_offset
-                lon = region_info['lon_center'] + lon_offset
+                lat = region_info['lat_center'] + np.random.uniform(
+                    -region_info['lat_range'] / 2,
+                    region_info['lat_range'] / 2)
+                lon = region_info['lon_center'] + np.random.uniform(
+                    -region_info['lon_range'] / 2,
+                    region_info['lon_range'] / 2)
                 if is_valid_us_coordinate(lat, lon):
                     lat += np.random.uniform(-0.5, 0.5)
                     lon += np.random.uniform(-0.5, 0.5)
@@ -259,8 +271,10 @@ class EnhancedHierarchicalSimulator:
                 lon = region_info['lon_center'] + np.random.uniform(-1, 1)
             self.city_coords[city] = (lat, lon)
 
+    # ------------------------------------------------------------------
+    # REPLICATION
+    # ------------------------------------------------------------------
     def calculate_replication_benefit(self, user, node):
-        """Calculate the benefit of replicating user data at a node"""
         access_freq = self.access_frequency_matrix[user][node]
         calls = self.user_call_frequency[user]
         moves = max(self.user_mobility_frequency[user], 1)
@@ -271,14 +285,11 @@ class EnhancedHierarchicalSimulator:
         return benefit, cmr
 
     def update_replicas(self, user):
-        """Update replica placement based on access patterns"""
         if not self.enable_replication:
             return
-
         access_nodes = self.user_call_sources[user]
         if not access_nodes:
             return
-
         calls = self.user_call_frequency[user]
         moves = max(self.user_mobility_frequency[user], 1)
         cmr = calls / moves
@@ -286,8 +297,8 @@ class EnhancedHierarchicalSimulator:
         replica_candidates = []
         for node, freq in access_nodes.items():
             if node != self.user_locations[user]:
-                benefit, user_cmr = self.calculate_replication_benefit(user, node)
-
+                benefit, user_cmr = self.calculate_replication_benefit(
+                    user, node)
                 if self.replication_strategy == 'CMR-based':
                     if user_cmr >= self.replication_threshold:
                         replica_candidates.append((node, benefit, freq))
@@ -295,14 +306,15 @@ class EnhancedHierarchicalSimulator:
                     if freq >= self.replication_threshold:
                         replica_candidates.append((node, benefit, freq))
                 elif self.replication_strategy == 'Hybrid':
-                    if user_cmr >= self.replication_threshold or freq >= max(self.replication_threshold // 2, 1):
+                    if (user_cmr >= self.replication_threshold
+                            or freq >= max(self.replication_threshold // 2, 1)):
                         replica_candidates.append((node, benefit, freq))
 
         replica_candidates.sort(key=lambda x: x[1], reverse=True)
         old_replicas = len(self.replica_locations[user])
         self.replica_locations[user].clear()
 
-        for i, (node, benefit, freq) in enumerate(replica_candidates[:self.max_replicas]):
+        for node, benefit, freq in replica_candidates[:self.max_replicas]:
             self.replica_locations[user].add(node)
 
         new_replicas = len(self.replica_locations[user])
@@ -315,31 +327,127 @@ class EnhancedHierarchicalSimulator:
             'cmr': cmr
         })
 
+    # ------------------------------------------------------------------
+    # LATENCY – forwarding-pointer-only (baseline)
+    # ------------------------------------------------------------------
+    def _forwarding_latency(self, caller, callee):
+        """Return the latency using ONLY forwarding pointers (no replicas).
+
+        This method does **not** mutate any metrics so it can be called as a
+        side-effect-free comparison alongside the replication-aware path.
+        """
+        home_city = self.user_home_locations[callee]
+        current = home_city
+        latency = 0
+
+        # City-level
+        if home_city in self.forwarding_pointers['city']:
+            for ptr in self.forwarding_pointers['city'][home_city]:
+                if ptr['user'] == callee:
+                    current = ptr['new_location']
+                    latency += 1
+                    break
+
+        # Region-level
+        if current == home_city:
+            home_region = list(self.G.predecessors(home_city))[0]
+            if home_region in self.forwarding_pointers['region']:
+                for ptr in self.forwarding_pointers['region'][home_region]:
+                    if ptr['user'] == callee:
+                        current = ptr['new_location']
+                        latency += 2
+                        break
+
+        # Root-level
+        if current == home_city:
+            if 'Root' in self.forwarding_pointers['root']:
+                for ptr in self.forwarding_pointers['root']['Root']:
+                    if ptr['user'] == callee:
+                        current = ptr['new_location']
+                        latency += 3
+                        break
+
+        # Exhaustive
+        if current != self.user_locations[callee]:
+            latency += 5
+
+        return latency
+
+    # ------------------------------------------------------------------
+    # LATENCY – with forwarding pointers (mutating version for metrics)
+    # ------------------------------------------------------------------
+    def find_user_with_forwarding(self, caller, callee):
+        latency = 0
+        queries = 0
+        home_city = self.user_home_locations[callee]
+        current = home_city
+        levels_checked = []
+
+        if home_city in self.forwarding_pointers['city']:
+            for ptr in self.forwarding_pointers['city'][home_city]:
+                if ptr['user'] == callee:
+                    current = ptr['new_location']
+                    self.metrics['forwarding_hits']['city'] += 1
+                    levels_checked.append('city')
+                    latency += 1
+                    queries += 1
+                    break
+
+        if current == home_city:
+            home_region = list(self.G.predecessors(home_city))[0]
+            if home_region in self.forwarding_pointers['region']:
+                for ptr in self.forwarding_pointers['region'][home_region]:
+                    if ptr['user'] == callee:
+                        current = ptr['new_location']
+                        self.metrics['forwarding_hits']['region'] += 1
+                        levels_checked.append('region')
+                        latency += 2
+                        queries += 2
+                        break
+
+        if current == home_city:
+            if 'Root' in self.forwarding_pointers['root']:
+                for ptr in self.forwarding_pointers['root']['Root']:
+                    if ptr['user'] == callee:
+                        current = ptr['new_location']
+                        self.metrics['forwarding_hits']['root'] += 1
+                        levels_checked.append('root')
+                        latency += 3
+                        queries += 3
+                        break
+
+        if current != self.user_locations[callee]:
+            latency += 5
+            queries += 10
+
+        self.metrics['queries'] += queries
+        return latency, levels_checked
+
+    # ------------------------------------------------------------------
+    # LATENCY – replication-aware wrapper
+    # ------------------------------------------------------------------
     def find_user_with_replication(self, caller, callee):
-        """Find user using replicas and forwarding pointers"""
         caller_city = self.user_locations[caller]
-        callee_city = self.user_locations[callee]
 
         self.user_call_sources[callee][caller_city] += 1
         self.access_frequency_matrix[callee][caller_city] += 1
 
-        # Check if replica exists at caller's city
+        # Check local replica
         if self.enable_replication and caller_city in self.replica_locations[callee]:
             self.metrics['replica_hits'] += 1
             self.costs['search_with_replication'] += 1
             return 1, ['replica']
 
-        # Check if replica exists in caller's region
+        # Check region-level replica
         if self.enable_replication:
             caller_region = list(self.G.predecessors(caller_city))[0]
-            region_cities = list(self.G.successors(caller_region))
-            for rc in region_cities:
+            for rc in self.G.successors(caller_region):
                 if rc in self.replica_locations[callee]:
                     self.metrics['replica_hits'] += 1
                     self.costs['search_with_replication'] += 2
                     return 2, ['replica_region']
 
-        # Standard forwarding pointer search
+        # Fall back to forwarding pointers
         latency, levels = self.find_user_with_forwarding(caller, callee)
 
         if self.enable_replication:
@@ -349,133 +457,74 @@ class EnhancedHierarchicalSimulator:
 
         return latency, levels
 
+    # ------------------------------------------------------------------
+    # MOBILITY
+    # ------------------------------------------------------------------
     def move_user_realistic(self, user):
-        """Realistic mobility model - prefer nearby cities"""
         current_city = self.user_locations[user]
         current_coords = self.city_coords[current_city]
         cities = list(self.city_coords.keys())
         distances = []
         for city in cities:
             if city != current_city:
-                coords = self.city_coords[city]
-                dist = np.sqrt(
-                    (coords[0] - current_coords[0]) ** 2 +
-                    (coords[1] - current_coords[1]) ** 2
-                )
-                distances.append(dist)
+                c = self.city_coords[city]
+                d = math.sqrt((c[0] - current_coords[0]) ** 2 +
+                              (c[1] - current_coords[1]) ** 2)
+                distances.append(d)
             else:
                 distances.append(float('inf'))
         distances = np.array(distances)
-        probabilities = 1 / (1 + distances)
-        probabilities = probabilities / probabilities.sum()
-        new_city = np.random.choice(cities, p=probabilities)
-        return new_city
+        probs = 1 / (1 + distances)
+        probs = probs / probs.sum()
+        return np.random.choice(cities, p=probs)
 
     def update_location_with_forwarding(self, user, new_city):
-        """Update location with forwarding pointers and replica management"""
         old_city = self.user_locations[user]
         if old_city == new_city:
             return
-
         self.metrics['updates'] += 1
         self.user_mobility_frequency[user] += 1
 
-        base_update_cost = 1
-        self.costs['update_without_replication'] += base_update_cost
-
+        base = 1
+        self.costs['update_without_replication'] += base
         if self.enable_replication:
-            replica_update_cost = len(self.replica_locations[user]) * 0.5
-            self.costs['update_with_replication'] += base_update_cost + replica_update_cost
-            self.costs['consistency_maintenance'] += replica_update_cost
+            rep_cost = len(self.replica_locations[user]) * 0.5
+            self.costs['update_with_replication'] += base + rep_cost
+            self.costs['consistency_maintenance'] += rep_cost
         else:
-            self.costs['update_with_replication'] += base_update_cost
+            self.costs['update_with_replication'] += base
 
         old_region = list(self.G.predecessors(old_city))[0]
         new_region = list(self.G.predecessors(new_city))[0]
 
         if old_region == new_region:
             self.forwarding_pointers['city'][old_city].append({
-                'user': user,
-                'new_location': new_city,
-                'timestamp': self.metrics['queries']
-            })
+                'user': user, 'new_location': new_city,
+                'timestamp': self.metrics['queries']})
         else:
             self.forwarding_pointers['region'][old_region].append({
-                'user': user,
-                'new_location': new_city,
-                'timestamp': self.metrics['queries']
-            })
-            if len(self.forwarding_pointers['region'][old_region]) > self.max_forwarding_chain:
+                'user': user, 'new_location': new_city,
+                'timestamp': self.metrics['queries']})
+            if len(self.forwarding_pointers['region'][old_region]) > \
+                    self.max_forwarding_chain:
                 self.forwarding_pointers['root']['Root'].append({
-                    'user': user,
-                    'new_location': new_city,
-                    'timestamp': self.metrics['queries']
-                })
+                    'user': user, 'new_location': new_city,
+                    'timestamp': self.metrics['queries']})
 
         for level in self.forwarding_pointers:
             for node in self.forwarding_pointers[level]:
-                if len(self.forwarding_pointers[level][node]) > self.max_forwarding_chain:
+                if len(self.forwarding_pointers[level][node]) > \
+                        self.max_forwarding_chain:
                     self.forwarding_pointers[level][node].pop(0)
 
         self.user_locations[user] = new_city
         self.G.remove_edge(old_city, user)
         self.G.add_edge(new_city, user)
 
-    def find_user_with_forwarding(self, caller, callee):
-        """Find user using forwarding pointers"""
-        latency = 0
-        queries = 0
-        home_city = self.user_home_locations[callee]
-        current_search_location = home_city
-        levels_checked = []
-
-        # City-level check
-        if home_city in self.forwarding_pointers['city']:
-            for pointer in self.forwarding_pointers['city'][home_city]:
-                if pointer['user'] == callee:
-                    current_search_location = pointer['new_location']
-                    self.metrics['forwarding_hits']['city'] += 1
-                    levels_checked.append('city')
-                    latency += 1
-                    queries += 1
-                    break
-
-        # Region-level check
-        if current_search_location == home_city:
-            home_region = list(self.G.predecessors(home_city))[0]
-            if home_region in self.forwarding_pointers['region']:
-                for pointer in self.forwarding_pointers['region'][home_region]:
-                    if pointer['user'] == callee:
-                        current_search_location = pointer['new_location']
-                        self.metrics['forwarding_hits']['region'] += 1
-                        levels_checked.append('region')
-                        latency += 2
-                        queries += 2
-                        break
-
-        # Root-level check
-        if current_search_location == home_city:
-            if 'Root' in self.forwarding_pointers['root']:
-                for pointer in self.forwarding_pointers['root']['Root']:
-                    if pointer['user'] == callee:
-                        current_search_location = pointer['new_location']
-                        self.metrics['forwarding_hits']['root'] += 1
-                        levels_checked.append('root')
-                        latency += 3
-                        queries += 3
-                        break
-
-        # Exhaustive search if needed
-        if current_search_location != self.user_locations[callee]:
-            latency += 5
-            queries += 10
-            current_search_location = self.user_locations[callee]
-
-        self.metrics['queries'] += queries
-        return latency, levels_checked
-
+    # ------------------------------------------------------------------
+    # OPTIMAL LEVEL
+    # ------------------------------------------------------------------
     def compute_optimal_level(self, user):
-        """Determine optimal hierarchy level for user based on CMR"""
         calls = self.user_call_frequency[user]
         moves = max(self.user_mobility_frequency[user], 1)
         cmr = calls / moves
@@ -483,15 +532,16 @@ class EnhancedHierarchicalSimulator:
             return 'root'
         elif cmr > 5:
             return 'region'
-        else:
-            return 'city'
+        return 'city'
 
+    # ------------------------------------------------------------------
+    # ONE SIMULATION STEP
+    # ------------------------------------------------------------------
     def simulate_step(self):
-        """Simulate one time step"""
         step_search_cost = 0
         step_update_cost = 0
 
-        # Phase 1: Move users
+        # Phase 1 – move users
         moved_users = []
         for user in list(self.user_locations.keys()):
             if np.random.rand() < self.mobility_prob:
@@ -500,69 +550,87 @@ class EnhancedHierarchicalSimulator:
                 moved_users.append(user)
                 step_update_cost += 1
 
-        # Phase 2: Simulate calls to build access patterns
+        # Phase 2 – simulate calls
         users = list(self.user_locations.keys())
         calls = []
-        total_latency = 0
+        total_latency_with = 0
+        total_latency_without = 0
         num_calls = int(len(users) * self.call_prob)
 
         for _ in range(num_calls):
             caller = np.random.choice(users)
             callee = np.random.choice(users)
-            if caller != callee:
-                self.user_call_frequency[caller] += 1
-                self.user_call_frequency[callee] += 1
-                latency, levels = self.find_user_with_replication(caller, callee)
-                total_latency += latency
-                step_search_cost += latency
-                calls.append({
-                    'caller': caller,
-                    'callee': callee,
-                    'latency': latency,
-                    'forwarding_levels': levels,
-                    'optimal_level': self.compute_optimal_level(callee),
-                    'used_replica': 'replica' in levels or 'replica_region' in levels
-                })
+            if caller == callee:
+                continue
 
-        # Phase 3: Update replicas AFTER calls so access patterns exist
+            self.user_call_frequency[caller] += 1
+            self.user_call_frequency[callee] += 1
+
+            # Latency WITH replication (or forwarding only if disabled)
+            latency_with, levels = self.find_user_with_replication(
+                caller, callee)
+
+            # Latency WITHOUT replication (forwarding only, no side effects)
+            latency_without = self._forwarding_latency(caller, callee)
+
+            total_latency_with += latency_with
+            total_latency_without += latency_without
+            step_search_cost += latency_with
+
+            calls.append({
+                'caller': caller,
+                'callee': callee,
+                'latency': latency_with,
+                'latency_no_repl': latency_without,
+                'forwarding_levels': levels,
+                'optimal_level': self.compute_optimal_level(callee),
+                'used_replica': 'replica' in levels
+                                or 'replica_region' in levels
+            })
+
+        # Phase 3 – update replicas AFTER calls
         if self.enable_replication:
-            called_users = set()
             for call in calls:
-                called_users.add(call['callee'])
-            for user in called_users:
-                self.update_replicas(user)
+                self.update_replicas(call['callee'])
             for user in moved_users:
                 self.update_replicas(user)
 
-        # Track costs per step
+        # record costs
         self.costs['search_costs_per_step'].append(step_search_cost)
         self.costs['update_costs_per_step'].append(step_update_cost)
 
-        # Calculate CMR
+        # CMR
         if self.metrics['updates'] > 0:
-            cmr = self.metrics['queries'] / self.metrics['updates']
-            self.metrics['cmr_history'].append(cmr)
+            self.metrics['cmr_history'].append(
+                self.metrics['queries'] / self.metrics['updates'])
 
-        # Track average latency
+        # latency histories
         if calls:
-            avg_latency = total_latency / len(calls)
-            self.metrics['latency_history'].append(avg_latency)
+            self.metrics['latency_history'].append(
+                total_latency_with / len(calls))
+            self.metrics['latency_no_repl_history'].append(
+                total_latency_without / len(calls))
 
-        # Track replica count
-        total_replicas = sum(len(r) for r in self.replica_locations.values())
-        self.metrics['replica_count_history'].append(total_replicas)
+        # replica count
+        total_reps = sum(len(r) for r in self.replica_locations.values())
+        self.metrics['replica_count_history'].append(total_reps)
 
-        # Calculate replication benefit
+        # replication benefit
         if self.enable_replication:
-            search_diff = self.costs['search_without_replication'] - self.costs['search_with_replication']
-            update_diff = self.costs['update_with_replication'] - self.costs['update_without_replication']
-            benefit = search_diff - update_diff
-            self.metrics['replication_benefit'].append(benefit)
+            s_diff = (self.costs['search_without_replication']
+                      - self.costs['search_with_replication'])
+            u_diff = (self.costs['update_with_replication']
+                      - self.costs['update_without_replication'])
+            self.metrics['replication_benefit'].append(s_diff - u_diff)
 
         return calls, moved_users
 
-    def run_simulation(self, steps=10):
-        """Run complete simulation"""
+    # ------------------------------------------------------------------
+    # FULL SIMULATION
+    # ------------------------------------------------------------------
+    def run_simulation(self, steps=10, seed=42):
+        np.random.seed(seed)
+
         results = {
             'calls': [],
             'movements': [],
@@ -572,57 +640,57 @@ class EnhancedHierarchicalSimulator:
         }
 
         for step in range(steps):
-            calls, moved_users = self.simulate_step()
+            calls, moved = self.simulate_step()
             results['calls'].extend(calls)
-            results['movements'].append(len(moved_users))
+            results['movements'].append(len(moved))
 
             for level in self.metrics['forwarding_hits']:
                 results['forwarding_effectiveness'][level].append(
-                    self.metrics['forwarding_hits'][level]
-                )
+                    self.metrics['forwarding_hits'][level])
 
             if self.enable_replication:
-                total_replicas = sum(len(r) for r in self.replica_locations.values())
-                users_with_reps = len(
-                    [u for u, r in self.replica_locations.items() if len(r) > 0]
-                )
+                tr = sum(len(r) for r in self.replica_locations.values())
+                ur = len([u for u, r in self.replica_locations.items()
+                          if len(r) > 0])
                 results['replication_stats'].append({
                     'step': step,
-                    'total_replicas': total_replicas,
+                    'total_replicas': tr,
                     'replica_hits': self.metrics['replica_hits'],
-                    'users_with_replicas': users_with_reps
+                    'users_with_replicas': ur
                 })
 
         results['cost_comparison'] = {
-            'search_without_replication': self.costs['search_without_replication'],
-            'search_with_replication': self.costs['search_with_replication'],
-            'update_without_replication': self.costs['update_without_replication'],
-            'update_with_replication': self.costs['update_with_replication'],
+            'search_without_replication':
+                self.costs['search_without_replication'],
+            'search_with_replication':
+                self.costs['search_with_replication'],
+            'update_without_replication':
+                self.costs['update_without_replication'],
+            'update_with_replication':
+                self.costs['update_with_replication'],
             'storage_cost': self.costs['storage_cost'],
             'consistency_cost': self.costs['consistency_maintenance']
         }
-
         return results
 
+    # ------------------------------------------------------------------
+    # ANALYSIS HELPERS
+    # ------------------------------------------------------------------
     def get_replication_analysis(self):
-        """Get detailed replication analysis"""
         analysis = {
             'users_with_replicas': {},
             'replica_distribution': defaultdict(int),
             'access_patterns': {},
             'cmr_analysis': {}
         }
-
         for user in self.user_locations:
-            replicas = self.replica_locations[user]
-            cmr = self.user_call_frequency[user] / max(self.user_mobility_frequency[user], 1)
-            if replicas:
+            reps = self.replica_locations[user]
+            cmr = (self.user_call_frequency[user]
+                   / max(self.user_mobility_frequency[user], 1))
+            if reps:
                 analysis['users_with_replicas'][user] = {
-                    'locations': list(replicas),
-                    'count': len(replicas),
-                    'cmr': cmr
-                }
-            analysis['replica_distribution'][len(replicas)] += 1
+                    'locations': list(reps), 'count': len(reps), 'cmr': cmr}
+            analysis['replica_distribution'][len(reps)] += 1
 
         for user, sources in self.user_call_sources.items():
             if sources:
@@ -632,54 +700,32 @@ class EnhancedHierarchicalSimulator:
             calls = self.user_call_frequency[user]
             moves = max(self.user_mobility_frequency[user], 1)
             cmr = calls / moves
-            if cmr > 10:
-                category = 'high_cmr'
-            elif cmr > 5:
-                category = 'medium_cmr'
-            else:
-                category = 'low_cmr'
-            if category not in analysis['cmr_analysis']:
-                analysis['cmr_analysis'][category] = []
-            analysis['cmr_analysis'][category].append({
-                'user': user,
-                'cmr': cmr,
-                'replicas': len(self.replica_locations[user])
-            })
-
+            cat = ('high_cmr' if cmr > 10
+                   else 'medium_cmr' if cmr > 5
+                   else 'low_cmr')
+            analysis['cmr_analysis'].setdefault(cat, []).append({
+                'user': user, 'cmr': cmr,
+                'replicas': len(self.replica_locations[user])})
         return analysis
 
     def get_call_data_for_map(self):
-        """Get call data formatted for map visualization"""
         call_data = []
-        sample_size = min(50, len(self.user_call_frequency))
-        sampled_users = list(self.user_call_frequency.keys())[:sample_size]
-
-        if not sampled_users:
+        sampled = list(self.user_call_frequency.keys())[:50]
+        if not sampled:
             return call_data
-
-        for i, caller in enumerate(sampled_users):
-            for j, callee in enumerate(sampled_users):
+        for i, caller in enumerate(sampled):
+            for j, callee in enumerate(sampled):
                 if i != j and np.random.rand() < 0.1:
-                    caller_city = self.user_locations[caller]
-                    callee_city = self.user_locations[callee]
-                    lat1, lon1 = self.city_coords[caller_city]
-                    lat2, lon2 = self.city_coords[callee_city]
-                    has_replica = caller_city in self.replica_locations[callee]
-                    if has_replica:
-                        latency = 1
-                    else:
-                        latency = 5
+                    cc = self.user_locations[caller]
+                    ce = self.user_locations[callee]
+                    lat1, lon1 = self.city_coords[cc]
+                    lat2, lon2 = self.city_coords[ce]
+                    has_rep = cc in self.replica_locations[callee]
                     call_data.append({
-                        'caller': caller,
-                        'callee': callee,
-                        'caller_city': caller_city,
-                        'callee_city': callee_city,
-                        'lat1': lat1,
-                        'lon1': lon1,
-                        'lat2': lat2,
-                        'lon2': lon2,
-                        'latency': latency,
-                        'has_replica': has_replica
-                    })
-
+                        'caller': caller, 'callee': callee,
+                        'caller_city': cc, 'callee_city': ce,
+                        'lat1': lat1, 'lon1': lon1,
+                        'lat2': lat2, 'lon2': lon2,
+                        'latency': 1 if has_rep else 5,
+                        'has_replica': has_rep})
         return call_data
